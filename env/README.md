@@ -33,3 +33,17 @@ Everything this project needs to run (locally, in AI Studio, and on Vercel) is l
 | `NODE_ENV` | No | `server.ts` | `production` serves the built `dist/` app; otherwise Vite middleware |
 | `DISABLE_HMR` | No | `vite.config.ts` | AI Studio sets `true` to disable file watching |
 | Firebase web config (in `firebase-applet-config.json`) | Yes | `src/services/firebaseAuth.ts` | Public web keys; replace the file to point at a different Firebase project |
+
+## Deploying env changes to Vercel (learned the hard way, 2026-09-29)
+
+- Vercel **never sees `env/.env.local`** (git-ignored by `.env*`) — the variable must be set in
+  **Project → Settings → Environment Variables** for every environment you actually deploy.
+  A `Development`-scope entry does **not** reach deployed builds; production needs a `Production`-scope entry.
+- After adding/changing an env var, **redeploy** — existing deployments keep their old values.
+- Store/paste the value **without surrounding quotes**. `.env` files may quote values
+  (`DEEPSEEK_API_KEY="sk-..."`) and dotenv strips the quotes locally — but a raw copy/pipe
+  keeps them, Vercel stores the quote characters as part of the secret, and DeepSeek then
+  replies `HTTP 401: Authentication Fails ... api key: ****bbb" is invalid`.
+  The key line in `env/.env.local` is now unquoted so naive copy-paste is safe.
+- Verify a deployment: `GET https://<app>/api/health` → `"hasApiKey": true`, then process a
+  small estimate and expect **HTTP 200** (not 500 with `DEEPSEEK_API_KEY is not configured`).

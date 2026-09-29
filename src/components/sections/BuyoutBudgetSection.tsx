@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { Fragment, useMemo, useState } from 'react';
 import {
   DollarSign,
   TrendingUp,
@@ -14,10 +14,13 @@ import {
   ClipboardList,
   Loader2,
   RefreshCw,
+  ChevronDown,
+  ChevronRight,
+  FileSignature,
 } from 'lucide-react';
-import { EstimateResult, TradeSection } from '../../types/estimate';
+import { EstimateResult, TradeSection, WorkOrderContract } from '../../types/estimate';
 import { applyBudgetEngine } from '../../utils/budgetEngine';
-import { formatMoney } from '../../utils/workOrders';
+import { assignCrews, computeWorkOrderContract, formatMoney } from '../../utils/workOrders';
 import { ConfirmModal } from '../ConfirmModal';
 
 interface BuyoutBudgetSectionProps {
@@ -40,6 +43,7 @@ export const BuyoutBudgetSection: React.FC<BuyoutBudgetSectionProps> = ({
   const [globalBuyoutPct, setGlobalBuyoutPct] = useState<number>(60);
   const [generatingOrders, setGeneratingOrders] = useState(false);
   const [confirmRegen, setConfirmRegen] = useState(false);
+  const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
 
   // Deterministic budget engine output (AI-extracted when available, derived
   // defaults otherwise) so the master budget is always auditable.
@@ -47,6 +51,26 @@ export const BuyoutBudgetSection: React.FC<BuyoutBudgetSectionProps> = ({
     () => (estimate ? applyBudgetEngine(estimate) : null),
     [estimate]
   );
+
+  // Live per-crew contract preview for the expandable ledger rows: one crew
+  // agreement links several budget lines (e.g. Demolition + Final Cleaning are
+  // both Crew 1), exactly like the CONTRACT AMOUNT & BUDGET LINE LINKAGE block
+  // on the generated work order. Uses the same assignCrews /
+  // computeWorkOrderContract functions as the generation path, applied to the
+  // engine-applied estimate, so buyout edits here update the preview live.
+  const contractByTask = useMemo(() => {
+    const map = new Map<string, { crewName: string; contract: WorkOrderContract }>();
+    if (!engineEstimate) return map;
+    for (const { crew, trades: crewTrades } of assignCrews(engineEstimate.trade_sections || [])) {
+      const contract = computeWorkOrderContract(crewTrades);
+      for (const crewTrade of crewTrades) {
+        if (!map.has(crewTrade.task_id)) {
+          map.set(crewTrade.task_id, { crewName: crew.name, contract });
+        }
+      }
+    }
+    return map;
+  }, [engineEstimate]);
 
   if (!estimate) {
     return (
@@ -347,10 +371,49 @@ export const BuyoutBudgetSection: React.FC<BuyoutBudgetSectionProps> = ({
                   trade.billable_revenue > 0
                     ? (marginAmount / trade.billable_revenue) * 100
                     : 0;
+                const isExpanded = expandedTaskId === trade.task_id;
+                const linkage = contractByTask.get(trade.task_id);
+                const engineTrade = engineEstimate?.trade_sections.find(
+                  (t) => t.task_id === trade.task_id
+                );
+                const toggleExpanded = () =>
+                  setExpandedTaskId(isExpanded ? null : trade.task_id);
 
                 return (
-                  <tr key={trade.task_id} className="hover:bg-slate-50/70 transition-colors">
-                    <td className="py-2.5 px-3 font-mono font-bold text-red-700 text-[12px]">
+                  <Fragment key={trade.task_id}>
+                  <tr
+                    className={`transition-colors cursor-pointer ${
+                      isExpanded ? 'bg-slate-50/80' : 'hover:bg-slate-50/70'
+                    }`}
+                    title="Click to expand contract amount & budget line linkage"
+                    onClick={(e) => {
+                      if (
+                        (e.target as HTMLElement).closest(
+                          'input, button, a, select, textarea'
+                        )
+                      ) {
+                        return;
+                      }
+                      toggleExpanded();
+                    }}
+                  >
+                    <td className="py-2.5 px-3 font-mono font-bold text-red-700 text-[12px] whitespace-nowrap">
+                      <button
+                        type="button"
+                        onClick={toggleExpanded}
+                        aria-label={
+                          isExpanded
+                            ? `Collapse ${trade.task_id} contract details`
+                            : `Expand ${trade.task_id} contract details`
+                        }
+                        className="mr-1 -ml-1 inline-flex items-center justify-center w-5 h-5 rounded text-slate-400 hover:text-red-700 hover:bg-slate-100 align-middle transition-colors"
+                      >
+                        {isExpanded ? (
+                          <ChevronDown className="w-3.5 h-3.5" />
+                        ) : (
+                          <ChevronRight className="w-3.5 h-3.5" />
+                        )}
+                      </button>
                       {trade.task_id}
                     </td>
                     <td className="py-2.5 px-3 font-medium text-slate-900">
@@ -445,6 +508,174 @@ export const BuyoutBudgetSection: React.FC<BuyoutBudgetSectionProps> = ({
                       )}
                     </td>
                   </tr>
+
+                  {isExpanded && (
+                    <tr className="bg-slate-50/80">
+                      <td colSpan={8} className="px-3 pt-1 pb-4">
+                        <div className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-none">
+                          <div className="px-4 py-3 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
+                            <div className="flex items-center gap-1.5">
+                              <FileSignature className="w-3.5 h-3.5 text-slate-400" />
+                              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                                CONTRACT AMOUNT &amp; BUDGET LINE LINKAGE
+                              </span>
+                            </div>
+                            {linkage && (
+                              <span className="text-[11px] text-slate-500">
+                                {linkage.crewName} · {linkage.contract.budget_lines.length}{' '}
+                                budget line(s)
+                              </span>
+                            )}
+                          </div>
+
+                          {linkage ? (
+                            <>
+                              <div className="overflow-x-auto">
+                                <table className="w-full text-left border-collapse text-[12px]">
+                                  <thead>
+                                    <tr className="border-b border-slate-200 bg-slate-50/70 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                                      <th className="py-2 px-4 w-[110px]">TASK</th>
+                                      <th className="py-2 px-3">TRADE PACKAGE</th>
+                                      <th className="py-2 px-4 text-right">AMOUNT</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-slate-100">
+                                    {linkage.contract.budget_lines.map((line) => (
+                                      <tr
+                                        key={line.task_id}
+                                        className={
+                                          line.task_id === trade.task_id
+                                            ? 'bg-red-50/50'
+                                            : ''
+                                        }
+                                      >
+                                        <td className="py-2 px-4 font-mono font-bold text-red-700 text-[11px] whitespace-nowrap align-top">
+                                          {line.task_id}
+                                          {line.task_id === trade.task_id && (
+                                            <span className="ml-1.5 font-sans text-[9px] font-bold uppercase tracking-wide text-red-600">
+                                              this line
+                                            </span>
+                                          )}
+                                        </td>
+                                        <td className="py-2 px-3 align-top">
+                                          <div className="font-medium text-slate-800">
+                                            {line.trade_name}
+                                          </div>
+                                          {line.trade_division &&
+                                            line.trade_division !== line.trade_name && (
+                                              <div className="text-[10px] text-slate-400">
+                                                {line.trade_division}
+                                              </div>
+                                            )}
+                                          {line.basis === 'sub_bid' ? (
+                                            <span className="inline-block mt-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                              Sub bid
+                                            </span>
+                                          ) : line.basis === 'budgeted_buyout' ? (
+                                            <span className="inline-block mt-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200">
+                                              Budgeted buyout
+                                            </span>
+                                          ) : (
+                                            <span className="inline-block mt-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 border border-slate-200">
+                                              Not set
+                                            </span>
+                                          )}
+                                        </td>
+                                        <td className="py-2 px-4 text-right font-semibold tabular-nums text-slate-900 align-top">
+                                          {formatMoney(line.amount)}
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                  <tfoot>
+                                    <tr className="border-t border-slate-200 bg-slate-50">
+                                      <td
+                                        colSpan={2}
+                                        className="py-2 px-4 text-[10px] font-bold uppercase tracking-wider text-slate-500"
+                                      >
+                                        TOTAL CONTRACT AMOUNT
+                                      </td>
+                                      <td className="py-2 px-4 text-right text-[13px] font-bold tabular-nums text-red-700">
+                                        {formatMoney(linkage.contract.contract_amount)}
+                                      </td>
+                                    </tr>
+                                  </tfoot>
+                                </table>
+                              </div>
+
+                              <div className="px-4 py-3 border-t border-slate-100 grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-2.5">
+                                <LineDetail
+                                  label="Assigned Subcontractor"
+                                  value={trade.subcontractor_name || 'Unassigned'}
+                                />
+                                <LineDetail
+                                  label="Execution Type"
+                                  value={
+                                    engineTrade?.execution_type ||
+                                    trade.execution_type ||
+                                    '—'
+                                  }
+                                />
+                                <LineDetail
+                                  label="Approved RCV"
+                                  value={formatMoney(trade.billable_revenue || 0)}
+                                />
+                                <LineDetail
+                                  label={`Target Buyout (${globalBuyoutPct}%)`}
+                                  value={formatMoney(targetBuyout)}
+                                />
+                                <LineDetail
+                                  label="Projected Margin"
+                                  value={`${formatMoney(marginAmount)} (${marginPct.toFixed(1)}%)`}
+                                />
+                                <LineDetail
+                                  label="Variance vs Target"
+                                  value={
+                                    variance >= 0
+                                      ? `+${formatMoney(variance)}`
+                                      : `-${formatMoney(Math.abs(variance))}`
+                                  }
+                                />
+                                <LineDetail
+                                  label="Schedule"
+                                  value={`${Math.max(1, trade.suggested_duration_days || 1)} day(s) · FS ${
+                                    trade.predecessors || '—'
+                                  }`}
+                                />
+                                <LineDetail
+                                  label="Category Codes"
+                                  value={trade.category_codes_included.join(', ') || '—'}
+                                />
+                              </div>
+
+                              {trade.scope_summary && (
+                                <div className="px-4 py-3 border-t border-slate-100">
+                                  <span className="block text-[9px] uppercase tracking-wider text-slate-400 font-bold mb-0.5">
+                                    Scope Summary
+                                  </span>
+                                  <p className="text-[11px] text-slate-600 leading-relaxed">
+                                    {trade.scope_summary}
+                                  </p>
+                                </div>
+                              )}
+
+                              <p className="px-4 pb-3 text-[10px] text-slate-400">
+                                Live preview from the current buyout budget — each line uses the
+                                entered Sub Bid, otherwise the engine's budgeted buyout (direct
+                                labor). This is the contract amount stamped on the crew's work
+                                order when generated.
+                              </p>
+                            </>
+                          ) : (
+                            <p className="px-4 py-3 text-[12px] text-slate-500">
+                              No linked contract found for this line yet.
+                            </p>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 );
               })}
             </tbody>
@@ -614,6 +845,16 @@ export const BuyoutBudgetSection: React.FC<BuyoutBudgetSectionProps> = ({
 
 const currency = (n: number) =>
   `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+/** One label/value cell inside a buyout ledger row's expanded detail grid. */
+const LineDetail: React.FC<{ label: string; value: React.ReactNode }> = ({ label, value }) => (
+  <div>
+    <span className="block text-[9px] uppercase tracking-wider text-slate-400 font-bold">
+      {label}
+    </span>
+    <span className="text-[11px] text-slate-800 font-semibold tabular-nums">{value}</span>
+  </div>
+);
 
 interface BudgetEngineCardProps {
   engineEstimate: EstimateResult | null;

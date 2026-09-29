@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 65 65">
+  <!-- Hays + Sons "H+" mark, 42 units tall, centred vertically on a 65x65 transparent field. -->
+  <!-- Geometry (65x42 canvas): bar 0,0 14x42; stem 36,0 14x42; crossbar 14,14 51x14 (flush at x=14). -->
+  <g transform="translate(0 11.5)">
+    <rect x="0" y="0" width="14" height="42" fill="#DC2626" />
+    <rect x="36" y="0" width="14" height="42" fill="#1A1A1A" />
+    <rect x="14" y="14" width="51" height="14" fill="#1A1A1A" />
+  </g>
+</svg>

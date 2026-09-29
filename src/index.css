@@ -1,0 +1,206 @@
+@import "tailwindcss";
+
+/* Hays + Sons brand tokens — Tailwind v4 theme variables (bg-brand, text-ink, ...) */
+@theme {
+  --color-brand: #DC2626;
+  --color-brand-hover: #B91C1C;
+  --color-ink: #1A1A1A;
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    scroll-behavior: smooth;
+    /* iOS rubber-banding / pull-to-refresh guard */
+    overscroll-behavior: none;
+  }
+
+  body {
+    background-color: #f8fafc;
+    /* 100dvh fallback order: older browsers keep the vh value, modern ones use dvh */
+    min-height: 100vh;
+    min-height: 100dvh;
+    overscroll-behavior: none;
+    /* Safe-area padding keeps UI clear of the notch and home indicator in iOS standalone; insets are 0 elsewhere */
+    padding: 0;
+    padding:
+      env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
+      env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+  }
+
+  /* Refined scrollbars across the app */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #cbd5e1 transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background-color: #cbd5e1;
+    border-radius: 9999px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: #94a3b8;
+  }
+}
+
+@layer utilities {
+  /* Hide scrollbar for Chrome, Safari and Opera */
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  /* Hide scrollbar for IE, Edge and Firefox */
+  .no-scrollbar {
+    -ms-overflow-style: none;  /* IE and Edge */
+    scrollbar-width: none;  /* Firefox */
+  }
+
+  /* Hide number input spin buttons */
+  input[type="number"]::-webkit-inner-spin-button,
+  input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type="number"] {
+    -moz-appearance: textfield;
+  }
+}
+
+/* ------------------------------------------------------------------
+   frappe-gantt theme override
+   The chart is themed through frappe-gantt's own CSS custom properties
+   (set on the wrapper so they cascade into the chart subtree) plus a
+   few class overrides for the critical-path / progress treatment.
+   ------------------------------------------------------------------ */
+.xg-gantt {
+  --g-bar-color: #334155; /* slate-700 — standard trade */
+  --g-bar-border: #334155;
+  --g-progress-color: rgba(255, 255, 255, 0.3); /* contrast against the bar */
+  --g-arrow-color: #94a3b8; /* slate-400 dependency arrows */
+  --g-text-dark: #0f172a;
+  --g-text-muted: #64748b;
+  --g-text-light: #ffffff;
+  --g-border-color: #e2e8f0;
+  --g-row-color: #ffffff;
+  --g-row-border-color: #e2e8f0;
+  --g-row-even-color: #fbfcfe;
+  --g-header-background: #f8fafc;
+  --g-tick-color: #f1f5f9;
+  --g-tick-color-thick: #e2e8f0;
+  --g-today-highlight: #dc2626; /* red-600, matches critical path */
+  --g-weekend-highlight-color: #f1f5f9; /* shaded non-working days */
+  --g-weekend-label-color: #e2e8f0;
+  --g-popup-actions: #f1f5f9;
+  --g-handle-color: #94a3b8;
+  --g-actions-background: #f8fafc;
+}
+
+/* Reserve space while the chart mounts so the panel does not jump. */
+.xg-gantt:empty {
+  min-height: 220px;
+}
+
+/* Critical path bars read red; standard trades stay slate. */
+.xg-gantt .bar-wrapper.xg-critical .bar {
+  fill: #dc2626;
+}
+.xg-gantt .bar-wrapper.xg-critical .bar-progress {
+  fill: rgba(255, 255, 255, 0.32);
+}
+/* Critical-path highlighting toggled off from the toolbar. */
+.xg-gantt .bar-wrapper.xg-critical.xg-plain .bar {
+  fill: #334155;
+}
+.xg-gantt .bar-wrapper.xg-critical.xg-plain .bar-progress {
+  fill: rgba(255, 255, 255, 0.3);
+}
+
+/* Dragging affordance: bars move, the edge handles resize. */
+.xg-gantt .bar-wrapper .bar {
+  cursor: grab;
+}
+.xg-gantt .bar-wrapper.active .bar {
+  cursor: grabbing;
+}
+
+/* A bar whose start was pinned by dragging (drag the edges to change it back
+   into an auto-sequenced bar, or reset it from the bar's details modal). */
+.xg-gantt .bar-wrapper.xg-pinned .bar {
+  stroke: #f59e0b;
+  stroke-width: 2;
+  stroke-dasharray: 5 3;
+}
+
+/* Bar labels sit inside the bar, so they need to be light and compact. */
+.xg-gantt .bar-wrapper .bar-label {
+  fill: #ffffff;
+  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  pointer-events: none;
+}
+/* ...unless the library pushed the label outside (short bars). */
+.xg-gantt .bar-wrapper.big .bar-label {
+  fill: #334155;
+}
+
+/* Left-hand task-name column. */
+.xg-gantt .side-header {
+  background: #f8fafc;
+  color: #0f172a;
+  font-size: 11px;
+  font-weight: 600;
+  border-right: 1px solid #e2e8f0;
+}
+
+.xg-gantt .grid-header {
+  font-size: 11px;
+  font-weight: 600;
+  color: #475569;
+}
+
+.xg-gantt .grid-row {
+  fill: #ffffff;
+}
+.xg-gantt .grid-row:nth-child(even) {
+  fill: var(--g-row-even-color);
+}
+
+/* Dependency arrows should sit behind the bars, not on top of them. */
+.xg-gantt svg.gantt .arrow {
+  z-index: -1;
+}
+
+/* Popup card on hover. */
+.xg-gantt .popup-wrapper {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  box-shadow: 0 12px 28px -8px rgba(15, 23, 42, 0.28);
+  padding: 10px 12px;
+  pointer-events: none;
+}
+.xg-gantt .popup-wrapper .title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #0f172a;
+}
+.xg-gantt .popup-wrapper .subtitle {
+  font-size: 11px;
+  color: #475569;
+}
+.xg-gantt .popup-wrapper .details {
+  font-size: 11px;
+  color: #64748b;
+  line-height: 1.5;
+}
+

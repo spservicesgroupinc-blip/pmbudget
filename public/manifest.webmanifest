@@ -1,0 +1,33 @@
+{
+  "id": "/",
+  "name": "Hays + Sons — Restoration Document Suite",
+  "short_name": "Hays + Sons",
+  "description": "Convert Xactimate insurance estimates into consolidated Subcontractor Trade Work Packages, buyout budgets, and Gantt schedules with Google Workspace sync.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "theme_color": "#DC2626",
+  "background_color": "#FFFFFF",
+  "lang": "en",
+  "categories": ["business", "productivity", "utilities"],
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

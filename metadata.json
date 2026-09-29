@@ -1,0 +1,6 @@
+{
+  "name": "Xactimate Trade Work Package & Scheduler",
+  "description": "Convert Xactimate insurance estimates into consolidated Subcontractor Trade Work Packages, buyout budgets, and Gantt schedules with Google Workspace sync.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}

@@ -1,0 +1,14 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+
+# Vercel CLI link state
+.vercel/
+
+# Local npm cache
+.npm-cache/

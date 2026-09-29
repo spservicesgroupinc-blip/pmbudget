@@ -2,22 +2,27 @@
  * Detailed Subcontractor Field Work Order PDF renderer (pdf-lib, environment-neutral).
  *
  * Output structure follows `instructions/work orders`:
- *  - Cover page: project metadata, site logistics, crew index, zero-financial notice.
+ *  - Cover page: project metadata, site logistics, crew index, contract-amount notice.
  *  - One section per trade crew with the mandatory 5-part sub-block format
  *    (Scope Summary / Safety / Step-by-Step instructions / Material Specs / QC)
  *    plus a DO NOT PERFORM exclusions block and a sign-off panel.
  *
- * Every string passes through the financial-redaction choke point so field
- * copies can never leak pricing. The same function runs in the browser and in
- * Node verification scripts.
+ * Every dynamic string passes through the financial-redaction choke point.
+ * Approved subcontract contract amounts are the one deliberate exception:
+ * formatMoney() output is drawn through a dedicated money path that skips
+ * redactFinancials, while carrier pricing, margins, O&P and unit rates stay
+ * hidden. The same function runs in the browser and in Node verification
+ * scripts.
  */
 import { PDFDocument, PDFFont, PDFPage, rgb, StandardFonts } from 'pdf-lib';
 import type { EstimateResult, WorkOrder, WorkOrderSiteLogistics } from '../types/estimate';
 import {
+  attachWorkOrderContracts,
   buildFallbackWorkOrders,
   buildSiteLogistics,
   computeWorkOrderChecksum,
   crewWorkOrderPdfFilename,
+  formatMoney,
   redactFinancials,
   redactWorkOrders,
   workOrderPdfFilename,
@@ -62,6 +67,13 @@ function sanitize(input: string): string {
     .replace(/[^\x20-\x7E\u00A1-\u00FF]/g, '?');
 }
 
+/** Static cost-basis tag for a contract budget line ('none' renders no tag). */
+function basisTagFor(basis: string): string {
+  if (basis === 'sub_bid') return 'Sub bid';
+  if (basis === 'budgeted_buyout') return 'Budgeted buyout';
+  return '';
+}
+
 class Packet {
   private doc: PDFDocument;
   private reg: PDFFont;
@@ -98,15 +110,20 @@ class Packet {
     this.pages.push(this.page);
   }
 
-  /** Single redaction choke point for every dynamic string this builder draws. */
+  /**
+   * Redaction choke point for every dynamic string this builder draws.
+   * Sanctioned exception: approved contract amounts, which are pre-formatted
+   * and rendered through money() with sanitize() only.
+   */
   private clean(raw: string): string {
     return sanitize(redactFinancials(String(raw ?? ''), this.extraCodes));
   }
 
   // ------------------------------------------------------------- primitives
 
-  private wrap(text: string, font: PDFFont, size: number, maxWidth: number): string[] {
-    const words = this.clean(text).split(/\s+/).filter(Boolean);
+  /** Width-based word wrap with no redaction pass (static copy / contract block). */
+  private wrapToWidth(text: string, font: PDFFont, size: number, maxWidth: number): string[] {
+    const words = String(text ?? '').split(/\s+/).filter(Boolean);
     if (words.length === 0) return [];
     const lines: string[] = [];
     let current = '';
@@ -121,6 +138,10 @@ class Packet {
     }
     if (current) lines.push(current);
     return lines;
+  }
+
+  private wrap(text: string, font: PDFFont, size: number, maxWidth: number): string[] {
+    return this.wrapToWidth(this.clean(text), font, size, maxWidth);
   }
 
   private ensure(needed: number) {
@@ -218,6 +239,22 @@ class Packet {
       this.y -= lineHeight;
       this.page.drawText(line, { x, y: this.y, font, size, color });
     }
+  }
+
+  /**
+   * Money bypass: draws a pre-formatted contract amount with sanitize() only,
+   * never redactFinancials, which would strip the "$" figures this document
+   * now deliberately includes. All other text stays on the clean() path.
+   */
+  private money(
+    x: number,
+    y: number,
+    str: string,
+    size: number,
+    font: PDFFont = this.reg,
+    color: ReturnType<typeof rgb> = INK
+  ) {
+    this.page.drawText(sanitize(str), { x, y, font, size, color });
   }
 
   paragraph(raw: string, indent = 0) {
@@ -502,8 +539,13 @@ class Packet {
     coverKeyValue('Dust & Trash Disposal', site.waste_disposal);
     coverKeyValue('Emergency Protocol', site.emergency_protocol);
 
-    // Zero-financial notice
-    const noticeH = 46;
+    // Contract-amount notice: subcontract amounts are included by design,
+    // carrier pricing / margins stay excluded. This static copy is drawn with
+    // sanitize() only so words like "pricing" survive the redaction word list.
+    const noticeBody =
+      "This packet includes each crew's approved subcontract contract amount, linked to the estimate budget lines. Carrier pricing, margins, Overhead & Profit and unit rates are excluded. Contact the office for any cost question.";
+    const noticeLines = this.wrapToWidth(sanitize(noticeBody), this.reg, 8.5, CONTENT_W - 24);
+    const noticeH = 30 + noticeLines.length * 11;
     this.page.drawRectangle({
       x: MARGIN,
       y: cy - noticeH + 6,
@@ -513,17 +555,24 @@ class Packet {
       borderColor: RED,
       borderWidth: 1,
     });
-    this.page.drawText('ZERO FINANCIAL VISIBILITY — FIELD COPY', {
+    this.page.drawText(sanitize('CONTRACT AMOUNT INCLUDED — CARRIER PRICING EXCLUDED'), {
       x: MARGIN + 12,
       y: cy - 12,
       font: this.bold,
       size: 10,
       color: RED_DARK,
     });
-    this.page.drawText(
-      sanitize('This packet intentionally contains no pricing, unit rates, margins or contract totals. Contact the office for any cost question.'),
-      { x: MARGIN + 12, y: cy - 26, font: this.reg, size: 8.5, color: RED_DARK }
-    );
+    let noticeY = cy - 26;
+    for (const line of noticeLines) {
+      this.page.drawText(line, {
+        x: MARGIN + 12,
+        y: noticeY,
+        font: this.reg,
+        size: 8.5,
+        color: RED_DARK,
+      });
+      noticeY -= 11;
+    }
     cy -= noticeH + 16;
 
     this.page.drawText(
@@ -591,6 +640,7 @@ class Packet {
     }`;
     this.text(refs, this.reg, 9, SLATE_400, MARGIN);
     this.y -= 6;
+    this.drawContractBlock(wo);
     this.drawCrewBody(wo, includeQc);
   }
 
@@ -611,6 +661,180 @@ class Packet {
       by -= 15;
     }
     this.y -= bandH + 16;
+  }
+
+  /**
+   * The subcontract contract amount linked to the estimate budget lines.
+   * This is the one financial block field crews receive: money values are
+   * pre-formatted with formatMoney() and drawn through the money() bypass,
+   * while task/trade labels stay on the clean() redaction path.
+   */
+  drawContractBlock(order: WorkOrder) {
+    const contract = order.contract;
+    const budgetLines = contract?.budget_lines || [];
+    if (!contract || budgetLines.length === 0) return;
+
+    // Red accent heading in the blockTitle visual language, unnumbered so it
+    // cannot be confused with the mandatory 1-5 scope blocks.
+    this.ensure(46);
+    this.y -= 12;
+    const boxH = 18;
+    this.page.drawRectangle({
+      x: MARGIN,
+      y: this.y - boxH + 3,
+      width: 18,
+      height: boxH,
+      color: RED,
+    });
+    this.page.drawText('$', {
+      x: MARGIN + 6,
+      y: this.y - boxH + 8,
+      font: this.bold,
+      size: 10,
+      color: WHITE,
+    });
+    this.page.drawText(sanitize('CONTRACT AMOUNT & BUDGET LINE LINKAGE'), {
+      x: MARGIN + 26,
+      y: this.y - boxH + 8,
+      font: this.bold,
+      size: 12,
+      color: RED_DARK,
+    });
+    this.y -= boxH + 6;
+    this.page.drawLine({
+      start: { x: MARGIN, y: this.y },
+      end: { x: PAGE_W - MARGIN, y: this.y },
+      thickness: 0.75,
+      color: LINE,
+    });
+    this.y -= 4;
+
+    // Column geometry: TASK | TRADE PACKAGE (flex) | AMOUNT (right aligned).
+    const taskX = MARGIN + 12;
+    const tradeX = MARGIN + 74;
+    const amountRight = PAGE_W - MARGIN - 12;
+    const tradeW = amountRight - 96 - tradeX;
+
+    this.ensure(22);
+    this.y -= 10;
+    this.page.drawText('TASK', {
+      x: taskX,
+      y: this.y,
+      font: this.bold,
+      size: 8,
+      color: SLATE_500,
+    });
+    this.page.drawText('TRADE PACKAGE', {
+      x: tradeX,
+      y: this.y,
+      font: this.bold,
+      size: 8,
+      color: SLATE_500,
+    });
+    const amountHeader = 'AMOUNT';
+    this.page.drawText(amountHeader, {
+      x: amountRight - this.bold.widthOfTextAtSize(amountHeader, 8),
+      y: this.y,
+      font: this.bold,
+      size: 8,
+      color: SLATE_500,
+    });
+    this.y -= 4;
+    this.page.drawLine({
+      start: { x: taskX, y: this.y },
+      end: { x: amountRight, y: this.y },
+      thickness: 0.5,
+      color: LINE,
+    });
+
+    for (const line of budgetLines) {
+      const taskLines = this.wrap(line.task_id || 'n/a', this.bold, 9, tradeX - taskX - 10);
+      const tradeLines = this.wrap(line.trade_name || 'n/a', this.reg, 9.5, tradeW);
+      const tag = basisTagFor(line.basis);
+      const rowH = Math.max(taskLines.length, tradeLines.length) * 11.5 + (tag ? 9.5 : 0) + 3;
+      this.ensure(rowH + 8);
+      const top = this.y;
+
+      let tyTask = top - 11;
+      for (const taskLine of taskLines) {
+        this.page.drawText(taskLine, {
+          x: taskX,
+          y: tyTask,
+          font: this.bold,
+          size: 9,
+          color: SLATE_900,
+        });
+        tyTask -= 11.5;
+      }
+
+      let tyTrade = top - 11;
+      for (const tradeLine of tradeLines) {
+        this.page.drawText(tradeLine, {
+          x: tradeX,
+          y: tyTrade,
+          font: this.reg,
+          size: 9.5,
+          color: SLATE_700,
+        });
+        tyTrade -= 11.5;
+      }
+
+      if (tag) {
+        this.page.drawText(sanitize(tag), {
+          x: tradeX,
+          y: tyTrade + 1.5,
+          font: this.italic,
+          size: 7.5,
+          color: SLATE_500,
+        });
+      }
+
+      const amount = formatMoney(line.amount);
+      this.money(
+        amountRight - this.bold.widthOfTextAtSize(sanitize(amount), 9.5),
+        top - 11,
+        amount,
+        9.5,
+        this.bold,
+        INK
+      );
+
+      this.y = top - rowH;
+      this.page.drawLine({
+        start: { x: taskX, y: this.y },
+        end: { x: amountRight, y: this.y },
+        thickness: 0.5,
+        color: LINE,
+      });
+    }
+
+    // Grand-total row for the whole subcontract.
+    this.ensure(32);
+    this.y -= 14;
+    this.page.drawText(sanitize('TOTAL CONTRACT AMOUNT'), {
+      x: tradeX,
+      y: this.y,
+      font: this.bold,
+      size: 10,
+      color: SLATE_900,
+    });
+    const total = formatMoney(contract.contract_amount);
+    this.money(
+      amountRight - this.bold.widthOfTextAtSize(sanitize(total), 10),
+      this.y,
+      total,
+      10,
+      this.bold,
+      RED_DARK
+    );
+    this.y -= 6;
+    this.page.drawLine({
+      start: { x: taskX, y: this.y },
+      end: { x: amountRight, y: this.y },
+      thickness: 1,
+      color: RED,
+    });
+    this.y -= 10;
   }
 
   /** The mandatory 5-part crew work order body + exclusions + sign-off. */
@@ -734,7 +958,9 @@ class Packet {
         color: LINE,
       });
       page.drawText(
-        sanitize(`${this.checksum}  •  Generated ${this.generatedLabel}  •  Zero financial visibility field copy`),
+        sanitize(
+          `${this.checksum}  •  Generated ${this.generatedLabel}  •  Field copy — contract amounts included, margins excluded`
+        ),
         { x: MARGIN, y: 28, font: this.reg, size: 7.5, color: SLATE_400 }
       );
       const label = `Page ${i + 1} of ${total}`;
@@ -750,7 +976,7 @@ class Packet {
 
     this.doc.setTitle(title || `Field Work Order Package — ${estimate.project_meta?.client_name || 'Project'}`);
     this.doc.setAuthor('Hays + Sons Complete Restoration');
-    this.doc.setSubject('Subcontractor Field Work Order (zero financial visibility)');
+    this.doc.setSubject('Subcontractor Field Work Order (contract amount included)');
     this.doc.setProducer('Hays + Sons — Restoration Document Suite');
     this.doc.setKeywords(['work order', 'restoration', 'subcontractor', this.checksum]);
     this.doc.setCreationDate(this.generatedLabel ? new Date(this.generatedLabel) : new Date());
@@ -767,8 +993,9 @@ export async function buildWorkOrderPdf(
   const checksum = computeWorkOrderChecksum(estimate, crews);
   // Second redaction layer: even internally-built fallback templates are
   // scrubbed before any text reaches a page, and estimate codes are added to
-  // the draw-time vocabulary.
-  const redactedCrews = redactWorkOrders(crews, estimate);
+  // the draw-time vocabulary. Contract linkage is backfilled after redaction
+  // (idempotent) so old estimates without contracts still render amounts.
+  const redactedCrews = attachWorkOrderContracts(redactWorkOrders(crews, estimate), estimate);
   const extraCodes = Array.from(
     new Set(
       (estimate.trade_sections || []).flatMap((t) =>
@@ -823,7 +1050,8 @@ export async function buildCrewWorkOrderPdf(
   crew: WorkOrder,
   options: WorkOrderPdfOptions = {}
 ): Promise<Uint8Array> {
-  const redactedCrew = redactWorkOrders([crew], estimate)[0] || crew;
+  const redactedCrew =
+    attachWorkOrderContracts(redactWorkOrders([crew], estimate), estimate)[0] || crew;
   const checksum = computeWorkOrderChecksum(estimate, [crew]);
   const doc = await PDFDocument.create();
   const reg = await doc.embedFont(StandardFonts.Helvetica);
@@ -846,6 +1074,7 @@ export async function buildCrewWorkOrderPdf(
     collectExtraCodes(estimate)
   );
   packet.drawStandaloneCrewHeader(estimate, redactedCrew);
+  packet.drawContractBlock(redactedCrew);
   packet.drawCrewBody(redactedCrew, options.includeQcChecklist !== false);
   return packet.finish(estimate, `${redactedCrew.crew_name} — Field Work Order`);
 }
@@ -866,7 +1095,7 @@ export async function buildAllCrewWorkOrderPdfs(
   options: WorkOrderPdfOptions = {}
 ): Promise<CrewWorkOrderPdfArtifact[]> {
   const base = workOrders && workOrders.length > 0 ? workOrders : buildFallbackWorkOrders(estimate);
-  const redactedCrews = redactWorkOrders(base, estimate);
+  const redactedCrews = attachWorkOrderContracts(redactWorkOrders(base, estimate), estimate);
   // Independent documents (each build creates its own PDFDocument): run the
   // per-crew builds in parallel; Promise.all preserves the redactedCrews order.
   return Promise.all(

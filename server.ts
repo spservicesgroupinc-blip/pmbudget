@@ -30,7 +30,7 @@ async function startServer() {
     res.status(result.status).json(result.body);
   });
 
-  // Generate subcontractor field work orders (zero financial visibility)
+  // Generate subcontractor field work orders (contract amounts linked to budget lines)
   app.post('/api/generate-work-orders', async (req, res) => {
     const result = await runGenerateWorkOrders(req.body || {});
     res.status(result.status).json(result.body);

@@ -37,18 +37,21 @@ repair and a model-driven repair pass before failure.
 exterior crew) and generates one work order per crew — one DeepSeek call per crew with bounded
 concurrency, per-crew deterministic fallback templates when the AI is unavailable.
 
-- **Zero financial visibility** (hard rule from `instructions/work orders`): every string passes
-  through `redactFinancials` in `src/utils/workOrders.ts` — money figures, margin language and
-  Xactimate category/selector codes are stripped. The PDF builder applies a second redaction
-  layer at draw time, and the UI applies a third at render time.
+- **Contract-amount policy** (hard rule from `instructions/work orders`): Work orders double as subcontractor contracts: each crew document includes its contract amount linked to the estimate budget lines (task id, trade package, amount). Carrier pricing, margins, O&P and unit rates remain stripped.
+  `attachWorkOrderContracts` in `src/utils/workOrders.ts` links each crew's `contract` (budget lines
+  + total, rendered exclusively via the shared `formatMoney`); all remaining strings pass through
+  `redactFinancials` — leftover margin language and Xactimate category/selector codes are stripped —
+  with a second PDF draw-time redaction layer and a third UI render-time layer.
 - Each crew gets the mandatory 5-part block: Scope Summary / Safety & Containment / Step-by-step
   field instructions (by room or phase) / Material Specs / QC Punchlist, plus a
   **DO NOT PERFORM / SCOPE EXCLUSIONS** block and a sign-off panel.
 - **PDF export** (`src/utils/workOrderPdf.ts`, pdf-lib): **one standalone PDF per subcontractor** —
   each document contains only that crew's exact scope (compact project/site header + the 5-part work
-  order + sign-off) so it can be emailed directly. `buildAllCrewWorkOrderPdfs` generates the whole
-  set; filenames look like `Client_Claim_1234_Flooring_WO.pdf`; every page carries a per-crew
-  verification token. An optional combined office packet remains available via `buildWorkOrderPdf`.
+  order + its **CONTRACT AMOUNT & BUDGET LINE LINKAGE** block + sign-off) so it can be emailed
+  directly; the office packet cover announces **CONTRACT AMOUNT INCLUDED — CARRIER PRICING
+  EXCLUDED**. `buildAllCrewWorkOrderPdfs` generates the whole set; filenames look like
+  `Client_Claim_1234_Flooring_WO.pdf`; every page carries a per-crew verification token. An
+  optional combined office packet remains available via `buildWorkOrderPdf`.
 - **Google Drive**: `uploadWorkOrderPdf` saves each crew document with the existing `drive.file` scope.
 
 ## HTTP API
@@ -57,7 +60,7 @@ concurrency, per-crew deterministic fallback templates when the AI is unavailabl
 | --- | --- |
 | `GET /api/health` | provider/model/capabilities/engines |
 | `POST /api/process-estimate` | `{ pdfBase64?, textContent?, prompt?, filename? }` → enriched `EstimateResult` with `budget_audit` + `material_allowances` |
-| `POST /api/generate-work-orders` | `{ estimate }` → `{ work_orders, site_logistics, generated_at, meta }` (redacted) |
+| `POST /api/generate-work-orders` | `{ estimate }` → `{ work_orders, site_logistics, generated_at, meta }` (each work order carries its subcontract contract amount + budget-line linkage; all other financials redacted) |
 
 ## UI Sections
 
@@ -72,7 +75,7 @@ Offline (no API key, no server):
 ```
 npm run lint                 # tsc --noEmit across src, scripts, server, engines
 npm run verify:budget        # budget engine: reconciliation, idempotence, cycle repair, turnkey rules
-npm run verify:workorders    # per-crew docs + office packet for all samples: re-parsed, asserts own-scope-only and zero money/code leaks
+npm run verify:workorders    # per-crew docs + office packet for all samples: re-parsed; own-scope-only, contract_amount == Σ budget lines, $ tokens allow-listed to the crew's own contract, no code leaks
 npm run verify:pdf-extract   # pdfjs-dist text extraction round-trip
 ```
 
@@ -85,9 +88,11 @@ Generated packet artifacts land in `scripts/__verify_tmp/out-workorder-<sample>.
 
 - `server.ts` — Express + Vite middleware, API endpoints
 - `deepseek.ts` — retry/repair JSON client · `xactEngine.ts` — extraction + prompt/schema
-- `workOrderEngine.ts` — per-crew work order generation + redaction/fallback orchestration
+- `workOrderEngine.ts` — per-crew work order generation + contract attachment/redaction/fallback
+  orchestration
 - `src/utils/budgetEngine.ts` — deterministic budget math · `src/utils/workOrders.ts` — crews,
-  redaction, fallbacks · `src/utils/workOrderPdf.ts` — pdf-lib packet renderer
+  contract attachment (`attachWorkOrderContracts` / `formatMoney`), redaction, fallbacks ·
+  `src/utils/workOrderPdf.ts` — pdf-lib packet renderer (CONTRACT AMOUNT & BUDGET LINE LINKAGE)
 - `src/utils/scheduler.ts` — business-day FS scheduler (Gantt + critical path)
 - `pdfText.ts` — pdfjs-dist text extraction for uploaded PDFs
 - `scripts/` — verification scripts · `instructions/` — source specs (budget + work orders)

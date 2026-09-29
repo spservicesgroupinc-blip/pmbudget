@@ -3,12 +3,14 @@
  *
  * One DeepSeek call per field crew (bounded concurrency) so a single crew can
  * never truncate the whole packet. Every crew falls back to the deterministic
- * field template on failure, and the entire packet is redacted of financial
- * data and Xactimate codes before it leaves this module.
+ * field template on failure. Free text is redacted of financial data and
+ * Xactimate codes; the field copy then includes office-attached contract
+ * amounts linked to budget lines, with carrier margins excluded.
  */
 import { deepseekJsonWithMeta, hasApiKey, resolveModel } from './deepseek.js';
 import {
   assignCrews,
+  attachWorkOrderContracts,
   buildFallbackCrewWorkOrder,
   buildSiteLogistics,
   computeWorkOrderChecksum,
@@ -48,6 +50,7 @@ You write ONE subcontractor field work order for ONE trade crew, using only the 
 ABSOLUTE RULES
 1. ZERO FINANCIAL VISIBILITY: never mention prices, unit rates, totals, margins, overhead, profit, deductibles,
    insurance amounts, "RCV" or any dollar figure. If the digest does not contain a number, you do not invent one.
+   Contract amounts are attached by the office system — never write any dollar figure yourself.
 2. NO INSURANCE SHORTHAND: never output Xactimate category or selector codes (DRY, PNT, WTR, DMO, FNH, MN, ...).
    Translate every abbreviation into plain-language physical work.
 3. ACTION VERBS: every instruction item starts with a strong verb (Erect, Remove, Install, Mask, Caulk,
@@ -247,23 +250,24 @@ export async function generateWorkOrderPackage(
   }
 
   const redacted = redactWorkOrders(workOrders, estimate);
-  const aiCrews = redacted.filter((wo) => wo.source === 'ai').length;
+  const contracted = attachWorkOrderContracts(redacted, estimate);
+  const aiCrews = contracted.filter((wo) => wo.source === 'ai').length;
   const source: WorkOrderPackageResult['meta']['source'] =
-    aiCrews === redacted.length ? 'ai' : aiCrews === 0 ? 'template' : 'mixed';
+    aiCrews === contracted.length ? 'ai' : aiCrews === 0 ? 'template' : 'mixed';
 
   return {
-    work_orders: redacted,
+    work_orders: contracted,
     site_logistics,
     meta: {
       source,
       engine: WORK_ORDER_ENGINE_VERSION,
       model: hasApiKey() ? resolveModel() : undefined,
-      crews: redacted.length,
+      crews: contracted.length,
       ai_crews: aiCrews,
-      template_crews: redacted.length - aiCrews,
+      template_crews: contracted.length - aiCrews,
       duration_ms: Date.now() - startedAt,
       warnings,
-      checksum: computeWorkOrderChecksum(estimate, redacted),
+      checksum: computeWorkOrderChecksum(estimate, contracted),
     },
   };
 }

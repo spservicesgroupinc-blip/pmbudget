@@ -71,7 +71,7 @@ export interface EstimateResult {
   budget_audit?: BudgetAudit;
   /** Itemized material procurement allowance (Output 2 of the budget spec). */
   material_allowances?: MaterialAllowanceItem[];
-  /** Redacted, crew-ready field work orders (zero financial visibility). */
+  /** Crew-ready field work orders with contract amounts linked to budget lines (carrier margins excluded). */
   work_orders?: WorkOrder[];
   work_order_site?: WorkOrderSiteLogistics;
   work_orders_generated_at?: string;
@@ -112,6 +112,22 @@ export interface WorkOrderAreaInstruction {
   items: string[];
 }
 
+export interface WorkOrderBudgetLine {
+  task_id: string;
+  trade_name: string;
+  trade_division?: string;
+  /** subcontractor_bid when defined, else direct_labor (budgeted buyout), rounded to cents. */
+  amount: number;
+  basis: 'sub_bid' | 'budgeted_buyout' | 'none';
+}
+
+export interface WorkOrderContract {
+  /** Σ budget_lines.amount, rounded to cents. */
+  contract_amount: number;
+  basis: 'sub_bid' | 'budgeted_buyout' | 'mixed' | 'none';
+  budget_lines: WorkOrderBudgetLine[];
+}
+
 export interface WorkOrder {
   crew_id: string;
   crew_name: string;
@@ -124,6 +140,8 @@ export interface WorkOrder {
   qc_checklist: string[];
   exclusions: string[];
   source: 'ai' | 'template';
+  /** Office-attached subcontractor contract amount derived from budget lines (carrier margins excluded). */
+  contract?: WorkOrderContract;
 }
 
 export interface WorkOrderSiteLogistics {

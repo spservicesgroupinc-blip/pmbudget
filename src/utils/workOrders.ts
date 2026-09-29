@@ -2,9 +2,10 @@
  * Subcontractor field work-order domain layer (shared client/server, pure TS).
  *
  * Implements the 7-crew taxonomy from `instructions/work orders` (plus a
- * supplemental exterior crew for roofing/siding scopes), the hard
- * zero-financial-visibility redaction rules, deterministic fallback templates
- * (used when the AI is unavailable) and the packet checksum.
+ * supplemental exterior crew for roofing/siding scopes), free-text redaction
+ * (carrier pricing / margins / Xactimate codes), contract-amount attachment
+ * linked to the estimate budget lines, deterministic fallback templates (used
+ * when the AI is unavailable) and the packet checksum.
  */
 import type {
   EstimateResult,
@@ -12,6 +13,8 @@ import type {
   TradeSection,
   WorkOrder,
   WorkOrderAreaInstruction,
+  WorkOrderBudgetLine,
+  WorkOrderContract,
   WorkOrderSiteLogistics,
 } from '../types/estimate.js';
 import { DIVISION_PROFILES } from './budgetEngine.js';
@@ -228,7 +231,9 @@ export function assignCrews(trades: TradeSection[]): CrewAssignment[] {
 }
 
 // ---------------------------------------------------------------------------
-// Financial redaction (hard privacy rule: crews never see money or codes)
+// Financial redaction (hard privacy rule: free text never carries money
+// figures, margin language or Xactimate codes; the only dollars that reach a
+// field copy are the office-attached contract amounts below)
 // ---------------------------------------------------------------------------
 
 // Non-canonical tokens that also appear as Xactimate selectors.
@@ -308,6 +313,83 @@ export function redactWorkOrders(workOrders: WorkOrder[], estimate: EstimateResu
 }
 
 // ---------------------------------------------------------------------------
+// Subcontractor contract amounts (office-attached, linked to budget lines)
+// ---------------------------------------------------------------------------
+
+const round2 = (v: number): number => Math.round(v * 100) / 100;
+
+/** Formats a dollar figure for contracts, e.g. 1234.5 -> "$1,234.50" (non-finite -> $0.00). */
+export function formatMoney(n: number): string {
+  const v = Number.isFinite(n) ? n : 0;
+  return '$' + v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+/**
+ * Builds the contract amount for one crew packet from its estimate trade
+ * sections: the subcontractor bid when present, else the budgeted buyout
+ * (direct labor). Carrier RCV, O&P and margin fields are never read here.
+ */
+export function computeWorkOrderContract(trades: TradeSection[]): WorkOrderContract {
+  const budget_lines: WorkOrderBudgetLine[] = trades.map((trade) => {
+    const basis: WorkOrderBudgetLine['basis'] =
+      trade.subcontractor_bid !== undefined
+        ? 'sub_bid'
+        : Number.isFinite(trade.direct_labor)
+          ? 'budgeted_buyout'
+          : 'none';
+    const amount =
+      basis === 'sub_bid'
+        ? round2(trade.subcontractor_bid as number)
+        : basis === 'budgeted_buyout'
+          ? round2(trade.direct_labor as number)
+          : 0;
+    const line: WorkOrderBudgetLine = {
+      task_id: trade.task_id,
+      trade_name: trade.trade_name,
+      amount,
+      basis,
+    };
+    if (trade.trade_division !== undefined) line.trade_division = trade.trade_division;
+    return line;
+  });
+
+  const nonNoneBases = Array.from(
+    new Set(budget_lines.map((line) => line.basis).filter((b) => b !== 'none'))
+  );
+  const basis: WorkOrderContract['basis'] =
+    budget_lines.length === 0 || nonNoneBases.length === 0
+      ? 'none'
+      : nonNoneBases.length === 1
+        ? (nonNoneBases[0] as 'sub_bid' | 'budgeted_buyout')
+        : 'mixed';
+
+  return {
+    contract_amount: round2(budget_lines.reduce((sum, line) => sum + line.amount, 0)),
+    basis,
+    budget_lines,
+  };
+}
+
+/**
+ * Idempotently attaches contract amounts to crew packets by matching each
+ * order's `trade_task_ids` against the estimate's trade sections. Orders that
+ * already carry a contract pass through untouched (old persisted estimates
+ * without contracts are upgraded).
+ */
+export function attachWorkOrderContracts(
+  orders: WorkOrder[],
+  estimate: EstimateResult
+): WorkOrder[] {
+  const trades = estimate.trade_sections || [];
+  return orders.map((order) => {
+    if (order.contract) return order;
+    const ids = order.trade_task_ids || [];
+    const matched = trades.filter((trade) => ids.includes(trade.task_id));
+    return { ...order, contract: computeWorkOrderContract(matched) };
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Deterministic fallback templates (used when the AI is unavailable)
 // ---------------------------------------------------------------------------
 
@@ -380,9 +462,10 @@ export function buildFallbackCrewWorkOrder(
 
 export function buildFallbackWorkOrders(estimate: EstimateResult): WorkOrder[] {
   const allowances = estimate.material_allowances || [];
-  return assignCrews(estimate.trade_sections || []).map(({ crew, trades }) =>
+  const orders = assignCrews(estimate.trade_sections || []).map(({ crew, trades }) =>
     buildFallbackCrewWorkOrder(crew, trades, allowances)
   );
+  return attachWorkOrderContracts(orders, estimate);
 }
 
 export function buildSiteLogistics(_estimate: EstimateResult): WorkOrderSiteLogistics {

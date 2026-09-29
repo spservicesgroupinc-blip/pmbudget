@@ -6,8 +6,8 @@ import {
   ChevronUp,
   ClipboardList,
   Download,
-  EyeOff,
   FileDown,
+  FileSignature,
   HardDrive,
   HardHat,
   Layers,
@@ -23,10 +23,12 @@ import type {
   WorkOrderSiteLogistics,
 } from '../../types/estimate';
 import {
+  attachWorkOrderContracts,
   buildFallbackWorkOrders,
   buildSiteLogistics,
   crewWorkOrderPdfFilename,
   estimateForWorkOrderRequest,
+  formatMoney,
   redactFinancials,
   redactWorkOrders,
 } from '../../utils/workOrders';
@@ -76,11 +78,15 @@ export const WorkOrdersSection: React.FC<WorkOrdersSectionProps> = ({
   const [expandedCrewId, setExpandedCrewId] = useState<string | null>(null);
   const [confirmRegen, setConfirmRegen] = useState(false);
 
-  // Render-time redaction guard: nothing reaches the field UI unless it has
-  // passed the zero-financial-visibility choke point, even if state was
-  // written by another code path.
+  // Render-time redaction guard: free text never reaches the field UI unless
+  // it has passed the carrier-pricing choke point, even if state was
+  // written by another code path. Contract amounts (numeric, carrier-safe) are
+  // attached afterwards so every crew links to its approved budget lines.
   const crews = useMemo<WorkOrder[]>(
-    () => (estimate ? redactWorkOrders(estimate.work_orders || [], estimate) : []),
+    () =>
+      estimate
+        ? attachWorkOrderContracts(redactWorkOrders(estimate.work_orders || [], estimate), estimate)
+        : [],
     [estimate]
   );
   const site = useMemo<WorkOrderSiteLogistics>(() => {
@@ -121,6 +127,8 @@ export const WorkOrdersSection: React.FC<WorkOrdersSectionProps> = ({
 
   const tradeIds = Array.from(new Set(crews.flatMap((c) => c.trade_task_ids)));
   const aiCrews = crews.filter((c) => c.source === 'ai').length;
+  const contractValue = crews.reduce((sum, c) => sum + (c.contract?.contract_amount || 0), 0);
+  const hasContracts = crews.some((c) => Boolean(c.contract));
 
   const generate = async () => {
     setGenerating(true);
@@ -244,17 +252,15 @@ export const WorkOrdersSection: React.FC<WorkOrdersSectionProps> = ({
                   Subcontractor Field Work Orders
                 </h3>
                 <span className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200">
-                  <EyeOff className="w-3 h-3" />
-                  ZERO FINANCIAL VISIBILITY
+                  <FileSignature className="w-3 h-3" />
+                  CONTRACT AMOUNTS INCLUDED
                 </span>
                 <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-red-50 text-red-700 border border-red-200">
                   7 + exterior crew taxonomy
                 </span>
               </div>
               <p className="text-[12px] text-slate-500 mt-0.5 max-w-2xl">
-                One separate PDF per subcontractor — each document contains only that crew's exact
-                scope, quantities, materials and QC. Money and Xactimate codes are stripped before
-                anything reaches the field.
+                Contract amounts included — carrier margins and O&P excluded.
               </p>
             </div>
           </div>
@@ -309,7 +315,11 @@ export const WorkOrdersSection: React.FC<WorkOrdersSectionProps> = ({
 
         {/* Status strip */}
         {crews.length > 0 && (
-          <div className="mt-4 pt-4 border-t border-slate-100 grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div
+            className={`mt-4 pt-4 border-t border-slate-100 grid grid-cols-2 ${
+              hasContracts ? 'md:grid-cols-5' : 'md:grid-cols-4'
+            } gap-3`}
+          >
             <div>
               <span className="block text-[10px] uppercase tracking-wider text-slate-400 font-bold">
                 Crew sections
@@ -326,6 +336,16 @@ export const WorkOrdersSection: React.FC<WorkOrdersSectionProps> = ({
                 {tradeIds.length}
               </span>
             </div>
+            {hasContracts && (
+              <div>
+                <span className="block text-[10px] uppercase tracking-wider text-slate-400 font-bold">
+                  Contract value
+                </span>
+                <span className="text-[16px] font-bold text-emerald-700 tabular-nums">
+                  {formatMoney(contractValue)}
+                </span>
+              </div>
+            )}
             <div>
               <span className="block text-[10px] uppercase tracking-wider text-slate-400 font-bold">
                 Generation source
@@ -432,6 +452,7 @@ export const WorkOrdersSection: React.FC<WorkOrdersSectionProps> = ({
       {/* Crew cards */}
       {crews.map((crew, idx) => {
         const isExpanded = expandedCrewId === crew.crew_id;
+        const contract = crew.contract;
         return (
           <div
             key={crew.crew_id}
@@ -473,6 +494,12 @@ export const WorkOrdersSection: React.FC<WorkOrdersSectionProps> = ({
                       {crew.qc_checklist.length} QC checks
                     </span>
                   </div>
+                  {contract && contract.budget_lines.length > 0 && (
+                    <p className="text-[11px] font-semibold text-slate-700 mt-1 tabular-nums">
+                      Contract {formatMoney(contract.contract_amount)} ·{' '}
+                      {contract.budget_lines.length} budget line(s)
+                    </p>
+                  )}
                 </div>
               </button>
               <div className="flex items-center gap-2 shrink-0">
@@ -507,8 +534,71 @@ export const WorkOrdersSection: React.FC<WorkOrdersSectionProps> = ({
             </div>
 
             {isExpanded && (
-              <div className="px-4 sm:px-5 pb-5 border-t border-slate-100 text-[12px] space-y-4">
-                <div className="pt-4">
+              <div className="px-4 sm:px-5 pt-4 pb-5 border-t border-slate-100 text-[12px] space-y-4">
+                {contract && contract.budget_lines.length > 0 && (
+                  <div>
+                    <div className="flex items-center gap-1.5">
+                      <FileSignature className="w-3.5 h-3.5 text-slate-400" />
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                        CONTRACT AMOUNT & BUDGET LINE LINKAGE
+                      </span>
+                    </div>
+                    <div className="mt-2 rounded-lg border border-slate-200 overflow-hidden">
+                      <div className="divide-y divide-slate-100">
+                        {contract.budget_lines.map((line, lineIdx) => (
+                          <div
+                            key={`${line.task_id}-${lineIdx}`}
+                            className="flex items-center justify-between gap-3 px-3 py-2 bg-white"
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <button
+                                type="button"
+                                onClick={() => onNavigateSection('packages')}
+                                title={`Open the ${line.task_id} budget line in Trade Packages`}
+                                className="px-1.5 py-0.5 rounded text-[10px] font-bold font-mono bg-slate-100 text-slate-700 border border-slate-200 hover:bg-red-50 hover:text-red-700 hover:border-red-200 transition-colors shrink-0"
+                              >
+                                {line.task_id}
+                              </button>
+                              <span className="text-slate-700 font-medium truncate">
+                                {line.trade_name}
+                              </span>
+                              {line.trade_division && (
+                                <span className="text-[10px] text-slate-400 truncate">
+                                  {line.trade_division}
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              {line.basis === 'sub_bid' && (
+                                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                  Sub bid
+                                </span>
+                              )}
+                              {line.basis === 'budgeted_buyout' && (
+                                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200">
+                                  Budgeted buyout
+                                </span>
+                              )}
+                              <span className="text-[12px] font-semibold text-slate-900 tabular-nums">
+                                {formatMoney(line.amount)}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="flex items-center justify-between gap-3 px-3 py-2 bg-slate-50 border-t border-slate-200">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                          TOTAL CONTRACT AMOUNT
+                        </span>
+                        <span className="text-[13px] font-bold text-slate-900 tabular-nums">
+                          {formatMoney(contract.contract_amount)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div>
                   <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
                     1 · Scope Summary
                   </span>
@@ -611,8 +701,8 @@ export const WorkOrdersSection: React.FC<WorkOrdersSectionProps> = ({
               Each PDF is a standalone document for one subcontractor — download and send it directly.
             </p>
             <p className="mt-0.5">
-              Every page carries a verification token, every crew signs the QC checklist before
-              demobilizing, and pricing never appears anywhere in the packet.
+              Contract amounts reflect the approved subcontract budget. Carrier pricing, margins
+              and O&P never appear anywhere in the packet.
             </p>
           </div>
         </div>

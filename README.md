@@ -9,8 +9,9 @@ Google Workspace export and **crew-ready Subcontractor Field Work Orders (PDF)**
 **Prerequisites:** Node.js 22+
 
 1. Install dependencies: `npm install --legacy-peer-deps` (pre-existing esbuild/vite peer conflict)
-2. Configure [.env.local](.env.local) with `DEEPSEEK_API_KEY` (optional: `DEEPSEEK_MODEL` default
-   `deepseek-chat`, `DEEPSEEK_BASE_URL`, `DEEPSEEK_MAX_TOKENS`)
+2. Configure [env/.env.local](env/.env.local) with `DEEPSEEK_API_KEY` (optional: `DEEPSEEK_MODEL`
+   default `deepseek-chat`, `DEEPSEEK_BASE_URL`, `DEEPSEEK_MAX_TOKENS`). All env vars/API keys
+   live in the `env/` folder — see [env/README.md](env/README.md) for the full inventory.
 3. Run the app: `npm run dev` → http://localhost:3000
 
 ## AI Pipeline (budget-engine-v2)
@@ -104,7 +105,8 @@ server from `server.ts` is not used on Vercel.
   Directory `dist` · Node.js **>= 20** (enforced by `engines` in `package.json`).
 - **Install reliability:** `.npmrc` commits `legacy-peer-deps=true` — Vercel runs plain
   `npm install`, which otherwise fails with `ERESOLVE`.
-- **Environment variables** (Project → Settings → Environment Variables; never committed):
+- **Environment variables** (Project → Settings → Environment Variables; never committed —
+  local copies live in `env/`, see [env/README.md](env/README.md)):
 
 | Variable | Required | Notes |
 | --- | --- | --- |
@@ -120,7 +122,7 @@ server from `server.ts` is not used on Vercel.
 - **Service worker:** `/sw.js` is served `Cache-Control: public, max-age=0, must-revalidate` so
   PWA updates always revalidate.
 
-Deploy via CLI (no git remote yet):
+Deploy via CLI (repo: `spservicesgroupinc-blip/pmbudget` — not git-connected to Vercel):
 
 ```bash
 npx vercel link      # one-time: link this folder to a Vercel project

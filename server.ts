@@ -5,7 +5,8 @@ import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { healthPayload, runProcessEstimate, runGenerateWorkOrders } from './serverRoutines';
 
-dotenv.config({ path: ['.env.local', '.env'] });
+// Env files/keys live in env/ (see env/README.md); root paths kept as legacy fallback.
+dotenv.config({ path: ['env/.env.local', 'env/.env', '.env.local', '.env'] });
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

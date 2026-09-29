@@ -5,6 +5,8 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
+    // All env files/keys live in env/ — see env/README.md
+    envDir: 'env',
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: [

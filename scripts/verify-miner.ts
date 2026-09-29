@@ -370,7 +370,8 @@ if (!process.argv.includes('--live')) {
   console.log('SKIP  live e2e (run with --live and DEEPSEEK_API_KEY to enable)');
 } else {
   const dotenv = (await import('dotenv')).default;
-  dotenv.config({ path: ['.env.local', '.env'] });
+  // Env files/keys live in env/ (see env/README.md); root paths kept as legacy fallback.
+  dotenv.config({ path: ['env/.env.local', 'env/.env', '.env.local', '.env'] });
   if (!process.env.DEEPSEEK_API_KEY) {
     console.log('SKIP  live e2e (DEEPSEEK_API_KEY not set)');
   } else {

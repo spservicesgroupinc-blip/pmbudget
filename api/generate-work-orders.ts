@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { runGenerateWorkOrders } from '../serverRoutines';
-import { methodNotAllowed, readJsonBody, sendJson } from './_lib';
+import { runGenerateWorkOrders } from '../serverRoutines.js';
+import { methodNotAllowed, readJsonBody, sendJson } from './_lib.js';
 
 export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (req.method !== 'POST') {

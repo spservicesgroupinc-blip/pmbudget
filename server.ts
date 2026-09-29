@@ -3,7 +3,7 @@ import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
-import { healthPayload, runProcessEstimate, runGenerateWorkOrders } from './serverRoutines';
+import { healthPayload, runProcessEstimate, runGenerateWorkOrders } from './serverRoutines.js';
 
 // Env files/keys live in env/ (see env/README.md); root paths kept as legacy fallback.
 dotenv.config({ path: ['env/.env.local', 'env/.env', '.env.local', '.env'] });

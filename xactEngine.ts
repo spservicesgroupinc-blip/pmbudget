@@ -8,15 +8,15 @@
  * engine so every number and checksum is recomputed in code, never trusted
  * from the model.
  */
-import { deepseekJsonWithMeta, resolveModel } from './deepseek';
-import { applyBudgetEngine, DIVISION_PROFILES, matchDivision } from './src/utils/budgetEngine';
-import { mineEstimateDollars } from './estimateTextMiner';
-import type { MinedEstimate } from './estimateTextMiner';
+import { deepseekJsonWithMeta, resolveModel } from './deepseek.js';
+import { applyBudgetEngine, DIVISION_PROFILES, matchDivision } from './src/utils/budgetEngine.js';
+import { mineEstimateDollars } from './estimateTextMiner.js';
+import type { MinedEstimate } from './estimateTextMiner.js';
 import type {
   EstimateResult,
   MaterialAllowanceItem,
   TradeSection,
-} from './src/types/estimate';
+} from './src/types/estimate.js';
 
 export const ESTIMATE_ENGINE_VERSION = 'budget-engine-v2';
 

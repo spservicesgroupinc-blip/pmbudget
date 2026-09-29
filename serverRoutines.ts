@@ -6,11 +6,11 @@
  * HTTP-shaped `{ status, body }` result and keeps all logging inside so both
  * callers behave identically.
  */
-import { extractPdfText } from './pdfText';
-import { hasApiKey, resolveModel } from './deepseek';
-import { ESTIMATE_ENGINE_VERSION, processEstimate } from './xactEngine';
-import { WORK_ORDER_ENGINE_VERSION, generateWorkOrderPackage } from './workOrderEngine';
-import type { EstimateResult } from './src/types/estimate';
+import { extractPdfText } from './pdfText.js';
+import { hasApiKey, resolveModel } from './deepseek.js';
+import { ESTIMATE_ENGINE_VERSION, processEstimate } from './xactEngine.js';
+import { WORK_ORDER_ENGINE_VERSION, generateWorkOrderPackage } from './workOrderEngine.js';
+import type { EstimateResult } from './src/types/estimate.js';
 
 export interface RoutineResult {
   status: number;

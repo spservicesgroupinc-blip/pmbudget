@@ -18,7 +18,7 @@ import type {
   EstimateResult,
   MaterialAllowanceItem,
   TradeSection,
-} from '../types/estimate';
+} from '../types/estimate.js';
 
 export const MATERIAL_TAX_RATE = 0.07;
 export const TURNKEY_BUYOUT_FACTOR = 0.68;

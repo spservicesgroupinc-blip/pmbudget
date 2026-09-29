@@ -6,7 +6,7 @@
  * field template on failure, and the entire packet is redacted of financial
  * data and Xactimate codes before it leaves this module.
  */
-import { deepseekJsonWithMeta, hasApiKey, resolveModel } from './deepseek';
+import { deepseekJsonWithMeta, hasApiKey, resolveModel } from './deepseek.js';
 import {
   assignCrews,
   buildFallbackCrewWorkOrder,
@@ -15,14 +15,14 @@ import {
   redactFinancials,
   redactWorkOrders,
   type CrewDefinition,
-} from './src/utils/workOrders';
+} from './src/utils/workOrders.js';
 import type {
   EstimateResult,
   TradeSection,
   WorkOrder,
   WorkOrderAreaInstruction,
   WorkOrderSiteLogistics,
-} from './src/types/estimate';
+} from './src/types/estimate.js';
 
 export const WORK_ORDER_ENGINE_VERSION = 'field-wo-v1';
 

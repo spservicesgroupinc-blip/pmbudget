@@ -11,7 +11,7 @@
  * Pure function: no I/O, no state, no network. The only dependency is the
  * canonical division taxonomy exported by the deterministic budget engine.
  */
-import { DIVISION_PROFILES, matchDivision } from './src/utils/budgetEngine';
+import { DIVISION_PROFILES, matchDivision } from './src/utils/budgetEngine.js';
 
 export interface MinedLine {
   code: string;

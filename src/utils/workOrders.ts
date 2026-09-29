@@ -13,8 +13,8 @@ import type {
   WorkOrder,
   WorkOrderAreaInstruction,
   WorkOrderSiteLogistics,
-} from '../types/estimate';
-import { DIVISION_PROFILES } from './budgetEngine';
+} from '../types/estimate.js';
+import { DIVISION_PROFILES } from './budgetEngine.js';
 
 export interface CrewDefinition {
   id: string;

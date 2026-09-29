@@ -1,4 +1,4 @@
-import React, { lazy, Suspense, useState, useEffect, useRef } from 'react';
+import React, { lazy, Suspense, useState, useEffect } from 'react';
 import { Header } from './components/Header';
 import { SideMenu } from './components/SideMenu';
 import { QuickAdd } from './components/QuickAdd';
@@ -7,18 +7,13 @@ import { IntakeSection } from './components/sections/IntakeSection';
 import { Toast, ToastMessage } from './components/Toast';
 import { ConfirmModal } from './components/ConfirmModal';
 import {
-  buildFallbackWorkOrders,
-  buildSiteLogistics,
-  estimateForWorkOrderRequest,
-  redactWorkOrders,
-} from './utils/workOrders';
-import {
   EstimateResult,
   TradeSection,
   WorkOrder,
   WorkOrderSiteLogistics,
 } from './types/estimate';
 import { SAMPLE_ESTIMATES } from './services/sampleEstimates';
+import { generateFinalWorkOrders, isBudgetAdjusted } from './services/workOrderGeneration';
 import { initAuth, googleSignIn, logout } from './services/firebaseAuth';
 import { User } from 'firebase/auth';
 
@@ -75,9 +70,6 @@ export default function App() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState<boolean>(false);
-  // One auto-generation attempt per processed estimate object (manual
-  // regeneration from the Field Work Orders section stays available).
-  const autoWorkOrderGuard = useRef<Set<EstimateResult>>(new Set());
 
   // Google Workspace Auth State
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -181,77 +173,6 @@ export default function App() {
     });
   };
 
-  // Fire-and-forget field work-order generation after a fresh estimate is
-  // processed. Falls back to deterministic field templates on any failure so
-  // the Field Work Orders section is always populated without a manual click.
-  const autoGenerateWorkOrders = async (estimate: EstimateResult) => {
-    if (autoWorkOrderGuard.current.has(estimate)) return;
-    autoWorkOrderGuard.current.add(estimate);
-
-    if (!estimate.trade_sections?.length || estimate.work_orders?.length) return;
-
-    try {
-      const res = await fetch('/api/generate-work-orders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ estimate: estimateForWorkOrderRequest(estimate) }),
-      });
-      if (!res.ok) {
-        const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.error || `Server responded with status ${res.status}`);
-      }
-      const payload = (await res.json()) as {
-        work_orders?: WorkOrder[];
-        site_logistics?: WorkOrderSiteLogistics;
-        generated_at?: string;
-        meta?: { source?: string };
-      };
-      const applied: WorkOrder[] = Array.isArray(payload.work_orders) ? payload.work_orders : [];
-      if (applied.length === 0) throw new Error('No crews were generated for this estimate.');
-
-      // Stale guard: only apply if the same estimate object is still loaded,
-      // and never mark the session dirty for an automatic background write.
-      setCurrentEstimate((prev) =>
-        prev === estimate
-          ? {
-              ...prev,
-              work_orders: redactWorkOrders(applied, estimate),
-              work_order_site: payload.site_logistics || prev.work_order_site,
-              work_orders_generated_at: payload.generated_at,
-            }
-          : prev
-      );
-
-      const source = payload.meta?.source;
-      const sourceLabel =
-        source === 'ai'
-          ? 'AI generation'
-          : source === 'mixed'
-            ? 'AI + field templates'
-            : 'deterministic field templates';
-      showToast(
-        'success',
-        `Field work orders auto-generated - ${applied.length} crews ready (${sourceLabel})`
-      );
-    } catch (err: any) {
-      const fallback = redactWorkOrders(buildFallbackWorkOrders(estimate), estimate);
-      setCurrentEstimate((prev) =>
-        prev === estimate
-          ? {
-              ...prev,
-              work_orders: fallback,
-              work_order_site: buildSiteLogistics(estimate),
-              work_orders_generated_at: new Date().toISOString(),
-            }
-          : prev
-      );
-      showToast(
-        'warning',
-        `Work-order AI unavailable (${err?.message || 'request failed'}); used field templates.`
-      );
-    }
-  };
-
   // Process PDF Estimate through backend
   const handleProcessPdf = async (file: File) => {
     if (file.size > MAX_SERVERLESS_PDF_BYTES) {
@@ -293,12 +214,11 @@ export default function App() {
       const warns = data.processing?.warnings || [];
       showToast(
         warns.length > 0 ? 'warning' : 'success',
-        `Synthesized ${data.trade_sections.length} trade packages for ${data.project_meta.client_name}${
-          warns.length ? ` - ${warns.length} extraction warning(s)` : ''
-        }`
+        `Extracted ${data.trade_sections.length} trade packages for ${data.project_meta.client_name} — adjust the buyout budget to unlock final work orders${
+          warns.length ? ` (${warns.length} extraction warning(s))` : ''
+        }.`
       );
-      setActiveSection('packages');
-      void autoGenerateWorkOrders(data);
+      setActiveSection('buyout');
     } catch (err: any) {
       console.error(err);
       setErrorMessage(
@@ -340,12 +260,11 @@ export default function App() {
       const warns = data.processing?.warnings || [];
       showToast(
         warns.length > 0 ? 'warning' : 'success',
-        `Synthesized ${data.trade_sections.length} trade packages for ${data.project_meta.client_name}${
-          warns.length ? ` - ${warns.length} extraction warning(s)` : ''
-        }`
+        `Extracted ${data.trade_sections.length} trade packages for ${data.project_meta.client_name} — adjust the buyout budget to unlock final work orders${
+          warns.length ? ` (${warns.length} extraction warning(s))` : ''
+        }.`
       );
-      setActiveSection('packages');
-      void autoGenerateWorkOrders(data);
+      setActiveSection('buyout');
     } catch (err: any) {
       console.error(err);
       setErrorMessage(err.message || 'Failed to process estimate text.');
@@ -362,13 +281,18 @@ export default function App() {
       setCurrentEstimate(JSON.parse(JSON.stringify(sample)));
       setHasUnsavedChanges(false);
       setErrorMessage(null);
-      showToast('success', `Loaded claim: ${sample.project_meta.client_name}`);
-      setActiveSection('packages');
+      showToast('success', `Loaded claim: ${sample.project_meta.client_name} — adjust the buyout budget to unlock final work orders.`);
+      setActiveSection('buyout');
     }
   };
 
-  // Update single trade
-  const handleUpdateTrade = (taskId: string, updated: Partial<TradeSection>) => {
+  // Update single trade. Buyout-page edits additionally stamp
+  // budget_adjusted_at, which unlocks final work order generation.
+  const handleUpdateTrade = (
+    taskId: string,
+    updated: Partial<TradeSection>,
+    options?: { markBudgetAdjusted?: boolean }
+  ) => {
     if (!currentEstimate) return;
     const newTrades = currentEstimate.trade_sections.map((t) =>
       t.task_id === taskId ? { ...t, ...updated } : t
@@ -376,8 +300,69 @@ export default function App() {
     setCurrentEstimate({
       ...currentEstimate,
       trade_sections: newTrades,
+      ...(options?.markBudgetAdjusted ? { budget_adjusted_at: new Date().toISOString() } : {}),
     });
     setHasUnsavedChanges(true);
+  };
+
+  // Bulk-applies the target buyout % to every trade's sub bid — one click both
+  // adjusts the budget and unlocks final work order generation.
+  const handleApplyBuyoutToAll = (pct: number) => {
+    if (!currentEstimate) return;
+    const clamped = Math.min(100, Math.max(0, pct));
+    const trades = currentEstimate.trade_sections.map((t) => ({
+      ...t,
+      subcontractor_bid: Math.round((t.billable_revenue || 0) * (clamped / 100) * 100) / 100,
+    }));
+    setCurrentEstimate({
+      ...currentEstimate,
+      trade_sections: trades,
+      budget_adjusted_at: new Date().toISOString(),
+    });
+    setHasUnsavedChanges(true);
+    showToast(
+      'success',
+      `Applied ${clamped}% target buyout to ${trades.length} trades — budget updated for final work orders.`
+    );
+  };
+
+  // Generates the final contract-bearing packet from the ADJUSTED budget and
+  // navigates to the packet. Gated: refuses until budget_adjusted_at is set.
+  const handleGenerateFinalWorkOrders = async () => {
+    const estimate = currentEstimate;
+    if (!estimate) return;
+    if (!isBudgetAdjusted(estimate)) {
+      showToast('warning', 'Adjust the buyout budget before generating final work orders.');
+      return;
+    }
+    const result = await generateFinalWorkOrders(estimate);
+    if (result.workOrders.length === 0) {
+      showToast('warning', 'No trade packages available to generate work orders.');
+      return;
+    }
+    // Stale guard: only apply if the same estimate object is still loaded.
+    setCurrentEstimate((prev) =>
+      prev === estimate
+        ? {
+            ...prev,
+            work_orders: result.workOrders,
+            work_order_site: result.siteLogistics || prev.work_order_site,
+            work_orders_generated_at: result.generatedAt,
+          }
+        : prev
+    );
+    setHasUnsavedChanges(true);
+    if (result.usedFallback) {
+      showToast(
+        'warning',
+        `Final work orders generated from field templates${
+          result.errorMessage ? ` (${result.errorMessage})` : ''
+        } — contract amounts follow the adjusted budget.`
+      );
+    } else {
+      showToast('success', `Generated ${result.workOrders.length} final work orders via ${result.sourceLabel}.`);
+    }
+    setActiveSection('workorders');
   };
 
   // Append a new trade package to the current estimate
@@ -490,8 +475,12 @@ export default function App() {
               {activeSection === 'buyout' && (
                 <BuyoutBudgetSection
                   estimate={currentEstimate}
-                  onUpdateTrade={handleUpdateTrade}
+                  onUpdateTrade={(id, updated) =>
+                    handleUpdateTrade(id, updated, { markBudgetAdjusted: true })
+                  }
                   onNavigateSection={setActiveSection}
+                  onApplyBuyoutToAll={handleApplyBuyoutToAll}
+                  onGenerateFinalWorkOrders={handleGenerateFinalWorkOrders}
                 />
               )}
 

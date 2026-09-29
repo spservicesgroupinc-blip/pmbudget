@@ -12,6 +12,7 @@ import {
   HardHat,
   Layers,
   Loader2,
+  Lock,
   RefreshCw,
   ShieldCheck,
   Sparkles,
@@ -24,14 +25,13 @@ import type {
 } from '../../types/estimate';
 import {
   attachWorkOrderContracts,
-  buildFallbackWorkOrders,
   buildSiteLogistics,
   crewWorkOrderPdfFilename,
-  estimateForWorkOrderRequest,
   formatMoney,
   redactFinancials,
   redactWorkOrders,
 } from '../../utils/workOrders';
+import { generateFinalWorkOrders } from '../../services/workOrderGeneration';
 import { buildAllCrewWorkOrderPdfs, buildCrewWorkOrderPdf } from '../../utils/workOrderPdf';
 import { uploadWorkOrderPdf } from '../../services/workspaceApi';
 import { mapWithConcurrency } from '../../utils/concurrency';
@@ -125,6 +125,14 @@ export const WorkOrdersSection: React.FC<WorkOrdersSectionProps> = ({
     );
   }
 
+  const budgetAdjusted = Boolean(estimate.budget_adjusted_at);
+  const budgetRevisedAfterGeneration = Boolean(
+    budgetAdjusted &&
+      estimate.budget_adjusted_at &&
+      estimate.work_orders_generated_at &&
+      Date.parse(estimate.budget_adjusted_at) > Date.parse(estimate.work_orders_generated_at)
+  );
+
   const tradeIds = Array.from(new Set(crews.flatMap((c) => c.trade_task_ids)));
   const aiCrews = crews.filter((c) => c.source === 'ai').length;
   const contractValue = crews.reduce((sum, c) => sum + (c.contract?.contract_amount || 0), 0);
@@ -133,42 +141,23 @@ export const WorkOrdersSection: React.FC<WorkOrdersSectionProps> = ({
   const generate = async () => {
     setGenerating(true);
     try {
-      const res = await fetch('/api/generate-work-orders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ estimate: estimateForWorkOrderRequest(estimate) }),
-      });
-      if (!res.ok) {
-        const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.error || `Server responded with status ${res.status}`);
+      const result = await generateFinalWorkOrders(estimate);
+      if (result.workOrders.length === 0) {
+        throw new Error('No crews were generated for this estimate.');
       }
-      const data = await res.json();
-      const applied: WorkOrder[] = Array.isArray(data.work_orders) ? data.work_orders : [];
-      if (applied.length === 0) throw new Error('No crews were generated for this estimate.');
-      onApplyWorkOrders(redactWorkOrders(applied, estimate), data.site_logistics, data.generated_at);
-      const meta = data.meta || {};
-      const sourceLabel =
-        meta.source === 'ai'
-          ? 'AI generation'
-          : meta.source === 'mixed'
-            ? 'AI + field templates'
-            : 'deterministic field templates';
-      onShowToast(
-        'success',
-        `Generated ${applied.length} crew work orders via ${sourceLabel}${
-          meta.checksum ? ` • ${meta.checksum}` : ''
-        }`
-      );
+      onApplyWorkOrders(result.workOrders, result.siteLogistics, result.generatedAt);
+      if (result.usedFallback) {
+        onShowToast(
+          'warning',
+          `AI service unavailable${
+            result.errorMessage ? ` (${result.errorMessage})` : ''
+          }. Generated the packet from field templates — contracts follow the adjusted budget.`
+        );
+      } else {
+        onShowToast('success', `Generated ${result.workOrders.length} crew work orders via ${result.sourceLabel}.`);
+      }
     } catch (err: any) {
-      // Offline / no-key fallback: deterministic templates straight from the loaded estimate.
-      const fallback = redactWorkOrders(buildFallbackWorkOrders(estimate), estimate);
-      onApplyWorkOrders(fallback, buildSiteLogistics(estimate));
-      onShowToast(
-        'warning',
-        err?.message
-          ? `AI service unavailable (${err.message}). Generated the packet from field templates.`
-          : 'AI service unavailable. Generated the packet from field templates.'
-      );
+      onShowToast('error', err?.message || 'Work order generation failed');
     } finally {
       setGenerating(false);
       setConfirmRegen(false);
@@ -266,22 +255,32 @@ export const WorkOrdersSection: React.FC<WorkOrdersSectionProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <button
-              onClick={handleGenerateClick}
-              disabled={generating}
-              className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-lg text-[12px] font-semibold bg-red-600 text-white hover:bg-red-700 shadow-sm transition-colors disabled:opacity-60"
-            >
-              {generating ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : crews.length > 0 ? (
-                <RefreshCw className="w-3.5 h-3.5" />
-              ) : (
-                <Sparkles className="w-3.5 h-3.5" />
-              )}
-              <span>
-                {generating ? 'Generating…' : crews.length > 0 ? 'Regenerate' : 'Generate Work Orders'}
-              </span>
-            </button>
+            {budgetAdjusted ? (
+              <button
+                onClick={handleGenerateClick}
+                disabled={generating}
+                className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-lg text-[12px] font-semibold bg-red-600 text-white hover:bg-red-700 shadow-sm transition-colors disabled:opacity-60"
+              >
+                {generating ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : crews.length > 0 ? (
+                  <RefreshCw className="w-3.5 h-3.5" />
+                ) : (
+                  <Sparkles className="w-3.5 h-3.5" />
+                )}
+                <span>
+                  {generating ? 'Generating…' : crews.length > 0 ? 'Regenerate' : 'Generate Work Orders'}
+                </span>
+              </button>
+            ) : (
+              <button
+                onClick={() => onNavigateSection('buyout')}
+                className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-lg text-[12px] font-semibold bg-amber-600 text-white hover:bg-amber-700 shadow-sm transition-colors"
+              >
+                <Lock className="w-3.5 h-3.5" />
+                <span>Adjust Budget to Unlock</span>
+              </button>
+            )}
 
             <button
               onClick={() => void downloadAllCrewPdfs()}
@@ -372,6 +371,39 @@ export const WorkOrdersSection: React.FC<WorkOrdersSectionProps> = ({
         )}
       </div>
 
+      {/* Packet predates the buyout adjustment requirement */}
+      {crews.length > 0 && !budgetAdjusted && (
+        <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-xl px-4 py-3 text-[12px]">
+          This packet predates the buyout adjustment requirement. Adjust the budget to enable
+          regeneration and keep contract amounts in sync.
+        </div>
+      )}
+
+      {/* Stale budget warning — the buyout budget was revised after last generation */}
+      {budgetRevisedAfterGeneration && crews.length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-start gap-2 text-[12px] text-amber-800 min-w-0">
+            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+            <p>
+              The buyout budget was revised after these work orders were generated — contract
+              amounts shown may be out of date. Regenerate to lock in the latest adjusted budget.
+            </p>
+          </div>
+          <button
+            onClick={handleGenerateClick}
+            disabled={generating}
+            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-[11px] font-semibold bg-amber-600 text-white hover:bg-amber-700 transition-colors disabled:opacity-60 shrink-0"
+          >
+            {generating ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="w-3.5 h-3.5" />
+            )}
+            <span>Regenerate Now</span>
+          </button>
+        </div>
+      )}
+
       {/* Site logistics */}
       {crews.length > 0 && (
         <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-none">
@@ -410,8 +442,36 @@ export const WorkOrdersSection: React.FC<WorkOrdersSectionProps> = ({
         </div>
       )}
 
-      {/* Empty / prompt state */}
-      {crews.length === 0 && (
+      {/* Empty / prompt state — locked until the buyout budget is adjusted */}
+      {crews.length === 0 && !budgetAdjusted && (
+        <div className="bg-white rounded-xl border border-dashed border-slate-300 p-10 text-center shadow-none">
+          <div className="w-12 h-12 rounded-full bg-amber-50 text-amber-600 mx-auto flex items-center justify-center mb-3">
+            <Lock className="w-6 h-6" />
+          </div>
+          <h3 className="text-[14px] font-semibold text-slate-800">
+            Final Work Orders are Locked
+          </h3>
+          <p className="text-[12px] text-slate-500 max-w-md mx-auto mt-1">
+            Adjust the buyout budget first. The Sub Bid and margin adjustments set the final dollar
+            amount on each subcontractor agreement, so the packet cannot be generated until the
+            budget is adjusted.
+          </p>
+          <button
+            onClick={() => onNavigateSection('buyout')}
+            className="mt-4 inline-flex items-center gap-1.5 h-9 px-4 rounded-lg text-[12px] font-semibold bg-amber-600 text-white hover:bg-amber-700 shadow-sm transition-colors"
+          >
+            <Lock className="w-3.5 h-3.5" />
+            <span>Go to Buyout Budget</span>
+          </button>
+          <p className="text-[11px] text-slate-400 mt-2">
+            Workflow: 1 · Extract estimate → 2 · Adjust buyout budget → 3 · Generate final work
+            orders.
+          </p>
+        </div>
+      )}
+
+      {/* Empty / prompt state — budget adjusted, ready to generate final contracts */}
+      {crews.length === 0 && budgetAdjusted && (
         <div className="bg-white rounded-xl border border-dashed border-slate-300 p-10 text-center shadow-none">
           <div className="w-12 h-12 rounded-2xl bg-red-50 text-red-600 mx-auto flex items-center justify-center mb-3">
             <HardHat className="w-6 h-6" />
@@ -420,9 +480,10 @@ export const WorkOrdersSection: React.FC<WorkOrdersSectionProps> = ({
             No field work orders generated yet
           </h3>
           <p className="text-[12px] text-slate-500 max-w-md mx-auto mt-1">
-            Generate one work order per crew for {estimate.trade_sections.length} trade package(s).
-            Each crew becomes a separate, send-ready PDF with its exact 5-part scope — quantities,
-            materials and QC — never pricing.
+            Budget adjusted ✓ — generate one work order per crew for{' '}
+            {estimate.trade_sections.length} trade package(s). Each crew becomes a separate,
+            send-ready PDF with its exact 5-part scope — quantities, materials and QC. Contract
+            amounts follow your adjusted buyout budget.
           </p>
           <button
             onClick={() => void generate()}

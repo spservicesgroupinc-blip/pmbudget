@@ -9,22 +9,37 @@ import {
   CheckCircle2,
   FileSpreadsheet,
   Sparkles,
+  Lock,
+  Unlock,
+  ClipboardList,
+  Loader2,
+  RefreshCw,
 } from 'lucide-react';
 import { EstimateResult, TradeSection } from '../../types/estimate';
 import { applyBudgetEngine } from '../../utils/budgetEngine';
+import { formatMoney } from '../../utils/workOrders';
+import { ConfirmModal } from '../ConfirmModal';
 
 interface BuyoutBudgetSectionProps {
   estimate: EstimateResult | null;
   onUpdateTrade: (taskId: string, updated: Partial<TradeSection>) => void;
   onNavigateSection: (id: string) => void;
+  /** Bulk-applies the target buyout % to every trade's Sub Bid; marks the budget adjusted (unlocks final work orders). */
+  onApplyBuyoutToAll: (pct: number) => void;
+  /** Generates the final contract-bearing work order packet. App stores the packet and navigates to it after success. */
+  onGenerateFinalWorkOrders: () => Promise<void>;
 }
 
 export const BuyoutBudgetSection: React.FC<BuyoutBudgetSectionProps> = ({
   estimate,
   onUpdateTrade,
   onNavigateSection,
+  onApplyBuyoutToAll,
+  onGenerateFinalWorkOrders,
 }) => {
   const [globalBuyoutPct, setGlobalBuyoutPct] = useState<number>(60);
+  const [generatingOrders, setGeneratingOrders] = useState(false);
+  const [confirmRegen, setConfirmRegen] = useState(false);
 
   // Deterministic budget engine output (AI-extracted when available, derived
   // defaults otherwise) so the master budget is always auditable.
@@ -62,8 +77,108 @@ export const BuyoutBudgetSection: React.FC<BuyoutBudgetSectionProps> = ({
   const projectedGrossMarginPct = totalRcv > 0 ? (projectedGrossProfit / totalRcv) * 100 : 0;
   const buyoutSavings = totalTargetBuyout - totalCommittedBids;
 
+  // Budget-gated final work orders: App stamps `budget_adjusted_at` on any buyout
+  // edit made from this page; generation stays locked until then.
+  const budgetAdjusted = Boolean(estimate.budget_adjusted_at);
+  const agreementValue = trades.reduce(
+    (sum, t) => sum + (t.subcontractor_bid ?? t.direct_labor ?? 0),
+    0
+  );
+  const hasExistingOrders = Boolean(estimate.work_orders?.length);
+  const budgetRevisedAfterGeneration = Boolean(
+    budgetAdjusted &&
+      estimate.budget_adjusted_at &&
+      estimate.work_orders_generated_at &&
+      Date.parse(estimate.budget_adjusted_at) > Date.parse(estimate.work_orders_generated_at)
+  );
+
+  const runGenerate = async () => {
+    setGeneratingOrders(true);
+    try {
+      await onGenerateFinalWorkOrders();
+    } finally {
+      setGeneratingOrders(false);
+      setConfirmRegen(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
+      {/* Workflow banner: extract → adjust buyout budget → generate final work orders */}
+      <div
+        className={`rounded-xl border p-4 shadow-none ${
+          estimate.budget_adjusted_at
+            ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+            : 'bg-amber-50 border-amber-200 text-amber-800'
+        }`}
+      >
+        <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3">
+          <div className="flex items-start gap-3 min-w-0">
+            <span
+              className={`shrink-0 p-2 rounded-lg ${
+                estimate.budget_adjusted_at
+                  ? 'bg-emerald-100 text-emerald-700'
+                  : 'bg-amber-100 text-amber-700'
+              }`}
+            >
+              {estimate.budget_adjusted_at ? (
+                <Unlock className="w-4 h-4" />
+              ) : (
+                <Lock className="w-4 h-4" />
+              )}
+            </span>
+            <p className="text-[12px] leading-relaxed">
+              {estimate.budget_adjusted_at ? (
+                <>
+                  Buyout budget adjusted{' '}
+                  {new Date(estimate.budget_adjusted_at).toLocaleString()} — final work orders are
+                  unlocked. Generate them in the Final Work Orders panel below.
+                </>
+              ) : (
+                <>
+                  Final work orders are locked until the buyout budget is adjusted. The Sub Bid and
+                  Margin Adjust values below set the final dollar amount on every subcontractor
+                  agreement — edit any line, or use 'Apply target % to all trades'.
+                </>
+              )}
+            </p>
+          </div>
+
+          {/* Workflow step chips */}
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <span className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-lg border border-slate-200 bg-white/80 text-[11px] font-semibold text-slate-600 whitespace-nowrap">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+              1 · Extract estimate
+              <span className="font-normal text-slate-400">✓ done</span>
+            </span>
+            <span
+              className={`inline-flex items-center gap-1.5 h-8 px-2.5 rounded-lg border text-[11px] font-semibold whitespace-nowrap ${
+                budgetAdjusted
+                  ? 'border-emerald-300 bg-white text-emerald-700'
+                  : 'border-red-600 bg-red-600 text-white'
+              }`}
+            >
+              {budgetAdjusted ? <CheckCircle2 className="w-3.5 h-3.5" /> : null}
+              2 · Adjust buyout budget
+            </span>
+            <span
+              className={`inline-flex items-center gap-1.5 h-8 px-2.5 rounded-lg border text-[11px] font-semibold whitespace-nowrap ${
+                budgetAdjusted
+                  ? 'border-emerald-300 bg-white text-emerald-700'
+                  : 'border-slate-200 bg-white/80 text-slate-500'
+              }`}
+            >
+              {budgetAdjusted ? (
+                <Unlock className="w-3.5 h-3.5" />
+              ) : (
+                <Lock className="w-3.5 h-3.5" />
+              )}
+              3 · Generate final work orders
+            </span>
+          </div>
+        </div>
+      </div>
+
       {/* Top Controller: Target Buyout Strategy */}
       <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-none">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -118,6 +233,13 @@ export const BuyoutBudgetSection: React.FC<BuyoutBudgetSectionProps> = ({
               (Target Sub Cost)
             </span>
           </div>
+          <button
+            type="button"
+            onClick={() => onApplyBuyoutToAll(globalBuyoutPct)}
+            className="shrink-0 h-8 px-3 rounded-lg bg-red-600 text-white text-[12px] font-semibold hover:bg-red-700 transition-colors whitespace-nowrap"
+          >
+            Apply {globalBuyoutPct}% to all trades
+          </button>
         </div>
       </div>
 
@@ -358,6 +480,128 @@ export const BuyoutBudgetSection: React.FC<BuyoutBudgetSectionProps> = ({
           </table>
         </div>
       </div>
+
+      {/* Final Work Orders — contract-bearing subcontractor agreements */}
+      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-none">
+        <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-3">
+          <span className="p-2 rounded-lg bg-red-50 text-red-600">
+            <ClipboardList className="w-4 h-4" />
+          </span>
+          <div>
+            <h3 className="text-[15px] font-semibold tracking-tight text-slate-900">
+              Final Work Orders — Subcontractor Agreements
+            </h3>
+            <p className="text-[12px] text-slate-500 mt-0.5">
+              Each crew's contract amount is computed from the adjusted buyout budget lines above
+              (carrier margins excluded).
+            </p>
+          </div>
+        </div>
+
+        {/* KPI strip */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 px-5 py-4 bg-slate-50/60 border-b border-slate-100">
+          <div>
+            <span className="block text-[10px] uppercase tracking-wider text-slate-400 font-bold">
+              Agreement value at current budget
+            </span>
+            <span className="text-[16px] font-bold text-slate-900 tabular-nums">
+              {formatMoney(agreementValue)}
+            </span>
+          </div>
+          <div>
+            <span className="block text-[10px] uppercase tracking-wider text-slate-400 font-bold">
+              Existing work orders
+            </span>
+            <span className="text-[16px] font-bold text-slate-900 tabular-nums">
+              {estimate.work_orders?.length || 0}
+            </span>
+          </div>
+        </div>
+
+        <div className="p-5 space-y-3">
+          {budgetAdjusted ? (
+            <>
+              <div className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[12px] font-medium text-emerald-700">
+                <Unlock className="w-3.5 h-3.5" />
+                Budget adjusted ✓ — you can generate the final packet.
+              </div>
+
+              {budgetRevisedAfterGeneration && hasExistingOrders ? (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
+                  Budget revised after the last generation — regenerate to refresh contract
+                  amounts.
+                </div>
+              ) : null}
+
+              <div>
+                <button
+                  type="button"
+                  onClick={hasExistingOrders ? () => setConfirmRegen(true) : runGenerate}
+                  disabled={generatingOrders}
+                  className="inline-flex items-center gap-2 h-9 px-4 rounded-lg bg-red-600 text-white text-[13px] font-semibold hover:bg-red-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {generatingOrders ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Generating…</span>
+                    </>
+                  ) : hasExistingOrders ? (
+                    <>
+                      <RefreshCw className="w-4 h-4" />
+                      <span>Regenerate Final Work Orders</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-4 h-4" />
+                      <span>Generate Final Work Orders</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3.5 flex items-start gap-2.5">
+                <Lock className="w-4 h-4 text-amber-700 mt-0.5 shrink-0" />
+                <p className="text-[12px] text-amber-800 leading-relaxed">
+                  Work orders are locked. Adjust the budget above first — edit a Sub Bid, move a
+                  Margin Adjust slider, or apply the target % to all trades.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => onApplyBuyoutToAll(globalBuyoutPct)}
+                  className="h-8 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-[12px] font-medium text-slate-700 transition-colors"
+                >
+                  Apply {globalBuyoutPct}% &amp; unlock
+                </button>
+                <button
+                  type="button"
+                  disabled
+                  title="Adjust the buyout budget above first — edit a Sub Bid, move a Margin Adjust slider, or apply the target % to all trades."
+                  className="inline-flex items-center gap-2 h-8 px-3 rounded-lg bg-red-600 text-white text-[12px] font-semibold opacity-60 cursor-not-allowed"
+                >
+                  <Lock className="w-3.5 h-3.5" />
+                  Generate Final Work Orders
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {hasExistingOrders ? (
+        <ConfirmModal
+          isOpen={confirmRegen}
+          title="Regenerate final work orders?"
+          message={`This replaces ${estimate.work_orders!.length} existing crew packet(s) with contracts computed from the current adjusted budget.`}
+          confirmLabel="Regenerate"
+          onConfirm={runGenerate}
+          onCancel={() => setConfirmRegen(false)}
+        />
+      ) : null}
 
       <BudgetEngineCard engineEstimate={engineEstimate} />
     </div>

@@ -75,6 +75,12 @@ export interface EstimateResult {
   work_orders?: WorkOrder[];
   work_order_site?: WorkOrderSiteLogistics;
   work_orders_generated_at?: string;
+  /**
+   * ISO timestamp of the most recent buyout budget adjustment for this claim
+   * (sub bid / margin / target application). Final work orders are locked
+   * until this is set — the adjusted buyout drives every contract amount.
+   */
+  budget_adjusted_at?: string;
   processing?: ProcessingMeta;
 }
 

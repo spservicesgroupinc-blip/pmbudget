@@ -1,5 +1,16 @@
 import gappsConfig from '../../env/gapps-config.json';
 
+/**
+ * Vercel overrides: when the build runs on Vercel, `VITE_GAPPS_WEB_APP_URL`
+ * and `VITE_GAPPS_APP_KEY` (set in Project → Settings → Environment Variables,
+ * see env/.env.vercel) override the values bundled from env/gapps-config.json.
+ * Locally those vars are undefined, so the committed JSON config is used.
+ */
+const gapps = {
+  webAppUrl: import.meta.env.VITE_GAPPS_WEB_APP_URL || gappsConfig.webAppUrl,
+  appKey: import.meta.env.VITE_GAPPS_APP_KEY || gappsConfig.appKey,
+};
+
 export interface GappsUser {
   email: string;
   name: string;
@@ -22,10 +33,10 @@ const SESSION_KEY = 'hays.sons.gapps.session.v1';
 
 /** True once BOTH the deployed Apps Script URL and the app key are present. */
 export const isGappsConfigured = (): boolean =>
-  gappsConfig.webAppUrl.length > 0 &&
-  !gappsConfig.webAppUrl.includes('REPLACE_WITH') &&
-  gappsConfig.appKey.length > 0 &&
-  !gappsConfig.appKey.includes('REPLACE_WITH');
+  gapps.webAppUrl.length > 0 &&
+  !gapps.webAppUrl.includes('REPLACE_WITH') &&
+  gapps.appKey.length > 0 &&
+  !gapps.appKey.includes('REPLACE_WITH');
 
 const isLocalDev = (): boolean =>
   typeof window !== 'undefined' &&
@@ -72,7 +83,7 @@ export async function gappsFetch<T>(
 ): Promise<T> {
   let url: string;
   if (isGappsConfigured()) {
-    url = gappsConfig.webAppUrl;
+    url = gapps.webAppUrl;
   } else if (isLocalDev()) {
     url = '/api/gapps-mock';
   } else {
@@ -84,7 +95,7 @@ export async function gappsFetch<T>(
   const session = readSession();
   const includeToken = action !== 'login' && action !== 'ping' && action !== 'addUser';
   const body: Record<string, unknown> = {
-    appKey: gappsConfig.appKey,
+    appKey: gapps.appKey,
     action,
     ...payload,
   };

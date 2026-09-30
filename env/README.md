@@ -35,7 +35,7 @@ Everything this project needs to run (locally, in AI Studio, and on Vercel) is l
 | `PORT` | No | `server.ts` | Default `3000` |
 | `NODE_ENV` | No | `server.ts` | `production` serves the built `dist/` app; otherwise Vite middleware |
 | `DISABLE_HMR` | No | `vite.config.ts` | AI Studio sets `true` to disable file watching |
-| Apps Script backend config (in `gapps-config.json`) | Yes | `src/services/gappsAuth.ts` | `webAppUrl` + `appKey`; fill in after deploying the Apps Script web app (see `instructions/apps-script-deployment.md`) |
+| Apps Script backend config (in `gapps-config.json`) | Yes | `src/services/gappsAuth.ts` | `webAppUrl` + `appKey`; fill in after deploying the Apps Script web app (see `instructions/apps-script-deployment.md`). On Vercel, `VITE_GAPPS_WEB_APP_URL` / `VITE_GAPPS_APP_KEY` (see `env/.env.vercel`) override the JSON at build time. |
 
 ## Deploying env changes to Vercel (learned the hard way, 2026-09-29)
 

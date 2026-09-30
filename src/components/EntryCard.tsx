@@ -7,6 +7,8 @@ import {
   Sparkles,
   CheckCircle2,
   AlertCircle,
+  Layers,
+  X,
 } from 'lucide-react';
 import { SAMPLE_ESTIMATES, RAW_ESTIMATE_SNIPPET } from '../services/sampleEstimates';
 import { EstimateResult } from '../types/estimate';
@@ -21,7 +23,7 @@ const isPdfFile = (file: File): boolean =>
   file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
 
 interface EntryCardProps {
-  onProcessPdf: (file: File) => Promise<void>;
+  onProcessPdf: (file: File, componentsFile?: File | null) => Promise<void>;
   onProcessText: (text: string) => Promise<void>;
   onLoadSample: (sampleKey: string) => void;
   isProcessing: boolean;
@@ -43,6 +45,12 @@ export const EntryCard: React.FC<EntryCardProps> = ({
   const [dragActive, setDragActive] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Optional second upload: Xactimate Component Breakdown Report.
+  const [componentsFile, setComponentsFile] = useState<File | null>(null);
+  const [componentsDragActive, setComponentsDragActive] = useState(false);
+  const [componentsError, setComponentsError] = useState<string | null>(null);
+  const componentsInputRef = useRef<HTMLInputElement>(null);
 
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault();
@@ -83,9 +91,45 @@ export const EntryCard: React.FC<EntryCardProps> = ({
     }
   };
 
+  const acceptComponentsFile = (file: File | null | undefined) => {
+    if (!file) return;
+    if (isPdfFile(file) && file.size > MAX_SERVERLESS_PDF_BYTES) {
+      setComponentsError(PDF_TOO_LARGE_MESSAGE);
+      return;
+    }
+    setComponentsError(null);
+    setComponentsFile(file);
+  };
+
+  const handleComponentsDrag = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.type === 'dragenter' || e.type === 'dragover') {
+      setComponentsDragActive(true);
+    } else if (e.type === 'dragleave') {
+      setComponentsDragActive(false);
+    }
+  };
+
+  const handleComponentsDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setComponentsDragActive(false);
+    acceptComponentsFile(e.dataTransfer.files && e.dataTransfer.files[0]);
+  };
+
+  const handleComponentsFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files && e.target.files[0];
+    if (file) {
+      acceptComponentsFile(file);
+      // Allow re-selecting the same file after a rejected pick.
+      e.target.value = '';
+    }
+  };
+
   const handleTriggerProcess = () => {
     if (mode === 'upload' && selectedFile) {
-      onProcessPdf(selectedFile);
+      onProcessPdf(selectedFile, componentsFile);
     } else if (mode === 'paste' && pastedText.trim()) {
       onProcessText(pastedText);
     }
@@ -217,6 +261,81 @@ export const EntryCard: React.FC<EntryCardProps> = ({
                 )}
               </div>
             </div>
+
+            {/* Optional second upload: Xactimate Component Breakdown Report */}
+            <div
+              onDragEnter={handleComponentsDrag}
+              onDragLeave={handleComponentsDrag}
+              onDragOver={handleComponentsDrag}
+              onDrop={handleComponentsDrop}
+              onClick={() => !componentsFile && componentsInputRef.current?.click()}
+              className={`border-2 border-dashed rounded-xl p-4 transition-colors ${
+                componentsFile
+                  ? 'border-emerald-300 bg-emerald-50/30'
+                  : componentsDragActive
+                  ? 'border-red-500 bg-red-50/50 cursor-pointer'
+                  : 'border-slate-300 hover:border-slate-400 bg-slate-50/50 hover:bg-slate-50 cursor-pointer'
+              }`}
+            >
+              <input
+                ref={componentsInputRef}
+                type="file"
+                accept=".pdf,application/pdf"
+                onChange={handleComponentsFileChange}
+                className="hidden"
+              />
+              {componentsFile ? (
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0">
+                      <Layers className="w-4 h-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-[12px] font-semibold text-slate-900 truncate">
+                        {componentsFile.name}
+                      </p>
+                      <p className="text-[11px] text-slate-500 tabular-nums">
+                        {(componentsFile.size / 1024).toFixed(1)} KB · Component quantities merged into the extraction
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={isProcessing}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setComponentsFile(null);
+                    }}
+                    className="p-1.5 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors disabled:opacity-45"
+                    aria-label="Remove component breakdown PDF"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2.5 text-left">
+                  <div className="w-8 h-8 rounded-lg bg-slate-100 text-slate-500 flex items-center justify-center shrink-0">
+                    <Layers className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <p className="text-[12px] font-semibold text-slate-700">
+                      Component Breakdown Report{' '}
+                      <span className="font-normal text-slate-400">(optional)</span>
+                    </p>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      Attach the Xactimate component report to use exact quantities for material allowances and customer selections.
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {componentsError && (
+              <div className="rounded-xl border border-rose-200 bg-rose-50 p-3.5 flex items-start gap-2.5 text-[12px] text-rose-700">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span className="flex-1">{componentsError}</span>
+              </div>
+            )}
 
             {fileError && (
               <div className="rounded-xl border border-rose-200 bg-rose-50 p-3.5 flex items-start gap-2.5 text-[12px] text-rose-700">

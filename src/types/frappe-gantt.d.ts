@@ -127,5 +127,7 @@ declare module 'frappe-gantt' {
     /** Scrolls the container to the given date (or 'start' | 'today' | 'end'). */
     set_scroll_position(date: Date | string | null): void;
     clear(): void;
+    /** Hides the hover/click popup if it is open. */
+    hide_popup(): void;
   }
 }

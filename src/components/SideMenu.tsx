@@ -7,6 +7,7 @@ import {
   Share2,
   Code2,
   ClipboardList,
+  Palette,
   Plus,
   UploadCloud,
 } from 'lucide-react';
@@ -43,6 +44,7 @@ export const SideMenu: React.FC<SideMenuProps> = ({
 }) => {
   const meta = currentEstimate?.project_meta;
   const tradeCount = currentEstimate?.trade_sections.length || 0;
+  const selectionCount = currentEstimate?.customer_selections?.length || 0;
 
   const groups: NavGroup[] = [
     {
@@ -82,6 +84,12 @@ export const SideMenu: React.FC<SideMenuProps> = ({
           label: 'Field Work Orders',
           icon: ClipboardList,
           badge: tradeCount > 0 ? 'WO' : undefined,
+        },
+        {
+          id: 'selections',
+          label: 'Customer Selections',
+          icon: Palette,
+          badge: selectionCount > 0 ? selectionCount : undefined,
         },
         {
           id: 'workspace',

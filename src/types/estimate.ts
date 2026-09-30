@@ -67,10 +67,19 @@ export interface EstimateResult {
   trade_sections: TradeSection[];
   extracted_at?: string;
   source_filename?: string;
+  /** Filename of the optional Component Breakdown Report upload, when provided. */
+  components_filename?: string;
   /** Deterministic reconciliation output from the budget engine. */
   budget_audit?: BudgetAudit;
   /** Itemized material procurement allowance (Output 2 of the budget spec). */
   material_allowances?: MaterialAllowanceItem[];
+  /**
+   * Customer-facing material selection allowances, derived from
+   * material_allowances and editable in the Customer Selections section.
+   * Stored separately so customer-facing edits never touch the budget engine
+   * procurement list or its audit checksums.
+   */
+  customer_selections?: CustomerSelectionItem[];
   /** Crew-ready field work orders with contract amounts linked to budget lines (carrier margins excluded). */
   work_orders?: WorkOrder[];
   work_order_site?: WorkOrderSiteLogistics;
@@ -93,6 +102,27 @@ export interface MaterialAllowanceItem {
   unit_cost: number;
   extended_cost: number;
   vendor?: string;
+}
+
+/** One row on the customer's material selection allowance sheet. */
+export interface CustomerSelectionItem {
+  /** Stable row id, e.g. "SEL-1" (derived) or "SEL-M2" (manually added). */
+  id: string;
+  /** Selection category, e.g. Flooring, Cabinets & Countertops. */
+  category: string;
+  /** Owning trade package name (informational). */
+  trade: string;
+  component_code?: string;
+  description: string;
+  qty: number;
+  uom: string;
+  /** Customer-facing allowance per unit (SF / LF / EA). */
+  allowance_per_unit: number;
+  /** qty x allowance_per_unit, rounded to cents. */
+  allowance_total: number;
+  vendor?: string;
+  notes?: string;
+  source: 'estimate' | 'manual';
 }
 
 export interface BudgetAudit {

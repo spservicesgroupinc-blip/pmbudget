@@ -1,19 +1,31 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ArrowRight,
   Flame,
   GanttChartSquare,
   Pin,
   RotateCcw,
+  Save,
+  Trash2,
   X,
 } from 'lucide-react';
-import { ScheduledTask } from '../types/estimate';
+import { ConfirmModal } from './ConfirmModal';
+import { ScheduledTask, TradeSection } from '../types/estimate';
+import {
+  addWorkdays,
+  formatDateYMD,
+  parseDateYMD,
+} from '../utils/scheduler';
 
 interface TaskDetailsModalProps {
   task: ScheduledTask;
+  allTaskIds: string[];
   onClose: () => void;
+  onUpdateTrade: (taskId: string, updated: Partial<TradeSection>) => void;
+  onRemoveTrade: (taskId: string) => void;
   onResetManualDates: (taskId: string) => void;
   onOpenTradePackages: () => void;
+  onShowToast: (type: 'success' | 'warning' | 'error', message: string) => void;
 }
 
 function formatLongDate(iso: string): string {
@@ -39,15 +51,41 @@ const DetailRow: React.FC<{ label: string; children: React.ReactNode }> = ({
 );
 
 /**
- * Read-only task details, opened by double-clicking a Gantt bar. Editing lives
- * in Trade Packages; this panel explains the bar and offers schedule actions.
+ * Editable task details, opened by clicking a Gantt bar. Workdays,
+ * predecessors, and the manual start override can be adjusted here, and the
+ * task can be removed from the schedule entirely.
  */
 export const TaskDetailsModal: React.FC<TaskDetailsModalProps> = ({
   task,
+  allTaskIds,
   onClose,
+  onUpdateTrade,
+  onRemoveTrade,
   onResetManualDates,
   onOpenTradePackages,
+  onShowToast,
 }) => {
+  const [days, setDays] = useState(String(task.suggested_duration_days));
+  const [preds, setPreds] = useState(task.predecessors || '');
+  const [startOverride, setStartOverride] = useState(
+    task.schedule_start_override || ''
+  );
+  const [error, setError] = useState<string | null>(null);
+  const [confirmRemove, setConfirmRemove] = useState(false);
+
+  // Resync from the parent whenever the underlying task values change (this
+  // also refreshes the inputs after a save).
+  useEffect(() => {
+    setDays(String(task.suggested_duration_days));
+    setPreds(task.predecessors || '');
+    setStartOverride(task.schedule_start_override || '');
+  }, [
+    task.task_id,
+    task.suggested_duration_days,
+    task.predecessors,
+    task.schedule_start_override,
+  ]);
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onClose();
@@ -61,11 +99,66 @@ export const TaskDetailsModal: React.FC<TaskDetailsModalProps> = ({
   const wasClamped =
     isPinned && task.schedule_start_override !== task.startDate;
 
+  const effStart = startOverride.trim() || task.startDate;
+  const previewDays = Number(days.trim());
+  const finishPreview =
+    Number.isInteger(previewDays) && previewDays >= 1
+      ? formatLongDate(
+          formatDateYMD(addWorkdays(parseDateYMD(effStart), previewDays))
+        )
+      : '—';
+
+  const handleSave = () => {
+    const parsedDays = Number(days.trim());
+    if (!Number.isInteger(parsedDays) || parsedDays < 1 || parsedDays > 365) {
+      setError('Workdays must be a whole number between 1 and 365.');
+      return;
+    }
+    const tokens = preds
+      .split(',')
+      .map((p) => p.trim())
+      .filter(Boolean);
+    if (tokens.includes(task.task_id)) {
+      setError('A task cannot depend on itself.');
+      return;
+    }
+    const unknown = tokens.filter((p) => !allTaskIds.includes(p));
+    if (unknown.length > 0) {
+      setError(
+        `Unknown predecessor${unknown.length === 1 ? '' : 's'}: ${unknown.join(
+          ', '
+        )} — use existing task IDs.`
+      );
+      return;
+    }
+    const normalizedPreds = tokens.join(', ');
+    const patch: Partial<TradeSection> = {};
+    if (parsedDays !== task.suggested_duration_days) {
+      patch.suggested_duration_days = parsedDays;
+    }
+    if (normalizedPreds !== (task.predecessors || '')) {
+      patch.predecessors = normalizedPreds;
+    }
+    const newOverride = startOverride.trim();
+    if (newOverride !== (task.schedule_start_override || '')) {
+      patch.schedule_start_override =
+        newOverride.length > 0 ? newOverride : undefined;
+    }
+    if (Object.keys(patch).length === 0) {
+      onShowToast('warning', 'No changes to save.');
+      return;
+    }
+    setError(null);
+    onUpdateTrade(task.task_id, patch);
+    onShowToast('success', `Saved ${task.task_id} — schedule re-sequenced.`);
+  };
+
   return (
-    <div
-      className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4 sm:p-8 animate-in fade-in duration-150"
-      role="dialog"
-      aria-modal="true"
+    <>
+      <div
+        className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4 sm:p-8 animate-in fade-in duration-150"
+        role="dialog"
+        aria-modal="true"
       aria-label={`Details for ${task.task_id} ${task.trade_name}`}
       onClick={onClose}
     >
@@ -124,16 +217,56 @@ export const TaskDetailsModal: React.FC<TaskDetailsModalProps> = ({
             <DetailRow label="Scheduled Start">
               {formatLongDate(task.startDate)}
             </DetailRow>
-            <DetailRow label="Scheduled Finish">
-              {formatLongDate(task.endDate)}
-            </DetailRow>
-            <DetailRow label="Workdays">
-              {task.suggested_duration_days}
-            </DetailRow>
-            <DetailRow label="Predecessors">
-              {task.predecessors || 'None'}
-            </DetailRow>
+            <DetailRow label="Scheduled Finish">{finishPreview}</DetailRow>
+            <label>
+              <span className="block text-[11px] font-semibold uppercase text-slate-400">
+                Workdays
+              </span>
+              <input
+                type="number"
+                min={1}
+                max={365}
+                step={1}
+                value={days}
+                onChange={(e) => setDays(e.target.value)}
+                className="mt-1 w-full h-9 px-3 rounded-lg border border-slate-300 bg-white text-[13px] text-slate-900 focus:outline-none focus:ring-2 focus:ring-red-200"
+              />
+            </label>
+            <label>
+              <span className="block text-[11px] font-semibold uppercase text-slate-400">
+                Predecessors
+              </span>
+              <input
+                type="text"
+                value={preds}
+                onChange={(e) => setPreds(e.target.value)}
+                placeholder="None — e.g. T-1, T-2"
+                className="mt-1 w-full h-9 px-3 rounded-lg border border-slate-300 bg-white text-[13px] text-slate-900 focus:outline-none focus:ring-2 focus:ring-red-200"
+              />
+            </label>
+            <label className="col-span-2">
+              <span className="block text-[11px] font-semibold uppercase text-slate-400">
+                Manual start override (optional)
+              </span>
+              <input
+                type="date"
+                value={startOverride}
+                onChange={(e) => setStartOverride(e.target.value)}
+                className="mt-1 w-full h-9 px-3 rounded-lg border border-slate-300 bg-white text-[13px] text-slate-900 focus:outline-none focus:ring-2 focus:ring-red-200"
+              />
+              <p className="mt-1.5 text-[11px] text-slate-500 leading-normal">
+                Leave empty to let the scheduler auto-sequence. The scheduler
+                never starts before the project start or before predecessors
+                finish.
+              </p>
+            </label>
           </div>
+
+          {error && (
+            <div className="rounded-xl border border-rose-200 bg-rose-50 p-3.5 text-[12px] text-rose-700 leading-normal">
+              {error}
+            </div>
+          )}
 
           {isPinned && (
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-3.5 text-[12px] text-amber-800 leading-normal">
@@ -190,6 +323,14 @@ export const TaskDetailsModal: React.FC<TaskDetailsModalProps> = ({
                 Reset manual dates
               </button>
             )}
+            <button
+              type="button"
+              onClick={() => setConfirmRemove(true)}
+              className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-rose-300 bg-white text-[13px] font-semibold text-rose-700 hover:bg-rose-50 transition-colors"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              Remove from schedule
+            </button>
           </div>
           <div className="flex items-center gap-2.5">
             <button
@@ -202,14 +343,38 @@ export const TaskDetailsModal: React.FC<TaskDetailsModalProps> = ({
             <button
               type="button"
               onClick={onOpenTradePackages}
-              className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-red-600 text-[13px] font-semibold text-white hover:bg-red-700 transition-colors shadow-sm"
+              className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg border border-slate-200 bg-white text-[13px] font-semibold text-slate-700 hover:bg-slate-100 transition-colors"
             >
               Open in Trade Packages
               <ArrowRight className="w-4 h-4" />
             </button>
+            <button
+              type="button"
+              onClick={handleSave}
+              className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-red-600 text-[13px] font-semibold text-white hover:bg-red-700 transition-colors shadow-sm"
+            >
+              <Save className="w-3.5 h-3.5" />
+              Save Changes
+            </button>
           </div>
         </div>
       </div>
-    </div>
+      </div>
+      <ConfirmModal
+        isOpen={confirmRemove}
+        title={`Remove ${task.task_id} from schedule?`}
+        subtitle={task.trade_name}
+        message={`${task.task_id} (${task.trade_name}) will be permanently removed from the estimate's trade packages.`}
+        consequence={`Any other task that lists ${task.task_id} as a predecessor will have that dependency cleared and will re-sequence from the project start.`}
+        confirmLabel="Remove Task"
+        isDestructive
+        onConfirm={() => {
+          setConfirmRemove(false);
+          onRemoveTrade(task.task_id);
+          onClose();
+        }}
+        onCancel={() => setConfirmRemove(false)}
+      />
+    </>
   );
 };

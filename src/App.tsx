@@ -8,6 +8,7 @@ import { Toast, ToastMessage } from './components/Toast';
 import { ConfirmModal } from './components/ConfirmModal';
 import {
   EstimateResult,
+  CustomerSelectionItem,
   TradeSection,
   WorkOrder,
   WorkOrderSiteLogistics,
@@ -50,6 +51,11 @@ const WorkOrdersSection = lazy(() =>
 const JsonExportSection = lazy(() =>
   import('./components/sections/JsonExportSection').then((m) => ({
     default: m.JsonExportSection,
+  }))
+);
+const CustomerSelectionsSection = lazy(() =>
+  import('./components/sections/CustomerSelectionsSection').then((m) => ({
+    default: m.CustomerSelectionsSection,
   }))
 );
 
@@ -173,8 +179,8 @@ export default function App() {
     });
   };
 
-  // Process PDF Estimate through backend
-  const handleProcessPdf = async (file: File) => {
+  // Process PDF Estimate through backend (optional second PDF: Component Breakdown Report)
+  const handleProcessPdf = async (file: File, componentsFile?: File | null) => {
     if (file.size > MAX_SERVERLESS_PDF_BYTES) {
       const sizeMb = (file.size / 1024 / 1024).toFixed(1);
       setErrorMessage(
@@ -183,11 +189,20 @@ export default function App() {
       showToast('error', 'PDF too large to upload');
       return;
     }
+    if (componentsFile && componentsFile.size > MAX_SERVERLESS_PDF_BYTES) {
+      const sizeMb = (componentsFile.size / 1024 / 1024).toFixed(1);
+      setErrorMessage(
+        `The component breakdown PDF is ${sizeMb} MB — serverless uploads cap at ~4.5 MB. Split the PDF or upload the estimate without it.`
+      );
+      showToast('error', 'Component breakdown PDF too large to upload');
+      return;
+    }
 
     setIsProcessing(true);
     setErrorMessage(null);
     try {
       const base64Data = await fileToBase64(file);
+      const componentsBase64 = componentsFile ? await fileToBase64(componentsFile) : null;
 
       const res = await fetch('/api/process-estimate', {
         method: 'POST',
@@ -197,6 +212,12 @@ export default function App() {
         body: JSON.stringify({
           pdfBase64: base64Data,
           filename: file.name,
+          ...(componentsBase64
+            ? {
+                componentsPdfBase64: componentsBase64,
+                componentsFilename: componentsFile?.name,
+              }
+            : {}),
         }),
       });
 
@@ -208,15 +229,19 @@ export default function App() {
       const data: EstimateResult = await res.json();
       data.source_filename = file.name;
       data.extracted_at = new Date().toISOString();
+      if (componentsFile) {
+        data.components_filename = componentsFile.name;
+      }
 
       setCurrentEstimate(data);
       setHasUnsavedChanges(false);
       const warns = data.processing?.warnings || [];
+      const selCount = data.customer_selections?.length || 0;
       showToast(
         warns.length > 0 ? 'warning' : 'success',
         `Extracted ${data.trade_sections.length} trade packages for ${data.project_meta.client_name} — adjust the buyout budget to unlock final work orders${
           warns.length ? ` (${warns.length} extraction warning(s))` : ''
-        }.`
+        }${selCount ? ` · ${selCount} customer selection item(s)` : ''}.`
       );
       setActiveSection('buyout');
     } catch (err: any) {
@@ -303,6 +328,38 @@ export default function App() {
       ...(options?.markBudgetAdjusted ? { budget_adjusted_at: new Date().toISOString() } : {}),
     });
     setHasUnsavedChanges(true);
+  };
+
+  // Removes a trade package from the estimate entirely. Other tasks that list
+  // the removed task as a predecessor have that dependency stripped so the
+  // scheduler can re-sequence them from the project start.
+  const handleRemoveTrade = (taskId: string) => {
+    if (!currentEstimate) return;
+    const target = currentEstimate.trade_sections.find(
+      (t) => t.task_id === taskId
+    );
+    const remaining = currentEstimate.trade_sections.filter(
+      (t) => t.task_id !== taskId
+    );
+    const cleaned = remaining.map((t) => {
+      const preds = (t.predecessors || '')
+        .split(',')
+        .map((p) => p.trim())
+        .filter(Boolean);
+      const kept = preds.filter((p) => p !== taskId);
+      return kept.length === preds.length
+        ? t
+        : { ...t, predecessors: kept.join(', ') };
+    });
+    setCurrentEstimate({
+      ...currentEstimate,
+      trade_sections: cleaned,
+    });
+    setHasUnsavedChanges(true);
+    showToast(
+      'success',
+      `Removed ${taskId}${target ? ` — ${target.trade_name}` : ''} from the schedule.`
+    );
   };
 
   // Bulk-applies the target buyout % to every trade's sub bid — one click both
@@ -415,6 +472,13 @@ export default function App() {
     setHasUnsavedChanges(true);
   };
 
+  // Persist edited customer selections (customer-facing allowance sheet rows).
+  const handleUpdateSelections = (items: CustomerSelectionItem[]) => {
+    if (!currentEstimate) return;
+    setCurrentEstimate((prev) => (prev ? { ...prev, customer_selections: items } : prev));
+    setHasUnsavedChanges(true);
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col text-slate-900 font-sans antialiased selection:bg-red-500/20">
       {/* Header */}
@@ -489,6 +553,7 @@ export default function App() {
                   estimate={currentEstimate}
                   onNavigateSection={setActiveSection}
                   onUpdateTrade={handleUpdateTrade}
+                  onRemoveTrade={handleRemoveTrade}
                   onShowToast={showToast}
                 />
               )}
@@ -511,6 +576,15 @@ export default function App() {
                   onApplyWorkOrders={handleApplyWorkOrders}
                   accessToken={accessToken}
                   onSignIn={handleSignIn}
+                />
+              )}
+
+              {activeSection === 'selections' && (
+                <CustomerSelectionsSection
+                  estimate={currentEstimate}
+                  onUpdateSelections={handleUpdateSelections}
+                  onNavigateSection={setActiveSection}
+                  onShowToast={showToast}
                 />
               )}
 

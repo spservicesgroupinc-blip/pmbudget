@@ -54,8 +54,28 @@ const LINE = rgb(0.886, 0.91, 0.941);
 const SOFT = rgb(0.945, 0.961, 0.976);
 const WHITE = rgb(1, 1, 1);
 
+/**
+ * Shared brand palette for sibling PDF renderers (e.g. the customer
+ * selections sheet). pdf-lib colors are document-independent, so these are
+ * safe to reuse across PDFDocument instances.
+ */
+export const PDF_PALETTE = {
+  RED,
+  RED_DARK,
+  INK,
+  ROSE_BG,
+  SLATE_900,
+  SLATE_700,
+  SLATE_600,
+  SLATE_500,
+  SLATE_400,
+  LINE,
+  SOFT,
+  WHITE,
+};
+
 /** WinAnsi-safe text for the standard PDF fonts. */
-function sanitize(input: string): string {
+export function sanitize(input: string): string {
   return String(input ?? '')
     .replace(/[\u2018\u2019\u02BC]/g, "'")
     .replace(/[\u201C\u201D]/g, '"')

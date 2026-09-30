@@ -10,6 +10,7 @@
  */
 import { deepseekJsonWithMeta, resolveModel } from './deepseek.js';
 import { applyBudgetEngine, DIVISION_PROFILES, matchDivision } from './src/utils/budgetEngine.js';
+import { buildCustomerSelections } from './src/utils/customerSelections.js';
 import { mineEstimateDollars } from './estimateTextMiner.js';
 import type { MinedEstimate } from './estimateTextMiner.js';
 import type {
@@ -452,6 +453,11 @@ export async function processEstimate(
   const mined = mineEstimateDollars(estimateText);
   warnings.push(...applyMinedBackfill(estimate, mined).warnings);
   const withBudget = applyBudgetEngine(estimate);
+
+  // Customer-facing selection sheet: derive selection rows from the final
+  // (scaled/reconciled) procurement allowances AFTER the budget engine, so
+  // the customer document reflects the audited numbers exactly.
+  withBudget.customer_selections = buildCustomerSelections(withBudget.material_allowances);
 
   const processWarnings = [...warnings, ...(withBudget.processing?.warnings || [])];
   if (truncated) processWarnings.push('Model response was truncated; JSON recovered via the repair pass.');

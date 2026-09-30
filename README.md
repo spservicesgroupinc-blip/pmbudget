@@ -54,19 +54,39 @@ concurrency, per-crew deterministic fallback templates when the AI is unavailabl
   optional combined office packet remains available via `buildWorkOrderPdf`.
 - **Google Drive**: `uploadWorkOrderPdf` saves each crew document with the existing `drive.file` scope.
 
+## Customer Selections & Material Allowances
+
+Intake accepts an optional second PDF — the **Xactimate Component Breakdown Report** — alongside the
+estimate. Both are merged into one extraction pass (the component report is appended beneath a
+marker header), so the engine's "exact component quantities" rule drives the material allowance
+roll-up.
+
+- `xactEngine.processEstimate` derives `customer_selections` from the final `material_allowances`
+  via the deterministic classifier in `src/utils/customerSelections.ts` (Flooring, Tile,
+  Cabinets & Countertops, Paint & Finishes, Trim & Doors, Plumbing Fixtures, Hardware, Appliances).
+  Selection rows live separately from the procurement list, so customer-facing edits never touch
+  the budget engine or its audit checksums.
+- **Customer Selections section**: review/edit rows (description, category, qty, uom, $/unit,
+  vendor, notes), add or remove items, rebuild from the extracted allowances, and generate the
+  branded **Customer Selections & Material Allowance Sheet** (`src/utils/customerSelectionsPdf.ts`).
+  The sheet is a deliberate customer-facing money document (allowance figures rendered via
+  `formatMoney`) — carrier RCV, O&P and margins never appear; the verify script allow-lists every
+  dollar token. Filenames look like `Client_Claim_1234_Customer_Selections.pdf`; every page carries
+  a `SEL-CHK-` verification token.
+
 ## HTTP API
 
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /api/health` | provider/model/capabilities/engines |
-| `POST /api/process-estimate` | `{ pdfBase64?, textContent?, prompt?, filename? }` → enriched `EstimateResult` with `budget_audit` + `material_allowances` |
+| `POST /api/process-estimate` | `{ pdfBase64?, componentsPdfBase64?, componentsFilename?, textContent?, prompt?, filename? }` → enriched `EstimateResult` with `budget_audit`, `material_allowances` and `customer_selections` |
 | `POST /api/generate-work-orders` | `{ estimate }` → `{ work_orders, site_logistics, generated_at, meta }` (each work order carries its subcontract contract amount + budget-line linkage; all other financials redacted) |
 
 ## UI Sections
 
 Intake & Metadata · Trade Packages · Buyout Budget (includes the AI Budget Engine panel with
 Output 1 master budget + Output 2 material allowance) · Gantt Schedule · **Field Work Orders** ·
-Workspace Sync (Sheets/Docs/Calendar/Drive) · JSON & Schema.
+**Customer Selections** · Workspace Sync (Sheets/Docs/Calendar/Drive) · JSON & Schema.
 
 ## Verification
 
@@ -76,6 +96,7 @@ Offline (no API key, no server):
 npm run lint                 # tsc --noEmit across src, scripts, server, engines
 npm run verify:budget        # budget engine: reconciliation, idempotence, cycle repair, turnkey rules
 npm run verify:workorders    # per-crew docs + office packet for all samples: re-parsed; own-scope-only, contract_amount == Σ budget lines, $ tokens allow-listed to the crew's own contract, no code leaks
+npm run verify:selections    # customer selections: classifier determinism, totals math, engine preservation, sheet PDF re-parsed; $ tokens allow-listed to allowance figures, no carrier language / code leaks
 npm run verify:pdf-extract   # pdfjs-dist text extraction round-trip
 ```
 

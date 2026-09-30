@@ -12,7 +12,9 @@ import {
   Link2,
   AlertCircle,
   Pin,
+  Trash2,
 } from 'lucide-react';
+import { ConfirmModal } from '../ConfirmModal';
 import { EstimateResult, ScheduledTask, TradeSection } from '../../types/estimate';
 import {
   computeSchedule,
@@ -32,6 +34,8 @@ interface GanttScheduleSectionProps {
   onNavigateSection: (id: string) => void;
   /** Persists drag/resize results into the estimate (App.handleUpdateTrade). */
   onUpdateTrade: (taskId: string, updated: Partial<TradeSection>) => void;
+  /** Deletes a trade package from the estimate (App.handleRemoveTrade). */
+  onRemoveTrade: (taskId: string) => void;
   onShowToast: (type: ToastType, message: string) => void;
 }
 
@@ -67,6 +71,7 @@ export const GanttScheduleSection: React.FC<GanttScheduleSectionProps> = ({
   estimate,
   onNavigateSection,
   onUpdateTrade,
+  onRemoveTrade,
   onShowToast,
 }) => {
   const [projectStartDate, setProjectStartDate] = useState<string>(getNextMonday());
@@ -74,6 +79,9 @@ export const GanttScheduleSection: React.FC<GanttScheduleSectionProps> = ({
   const [viewMode, setViewMode] = useState<ViewMode>('Day');
   const [renderError, setRenderError] = useState<string | null>(null);
   const [detailsTaskId, setDetailsTaskId] = useState<string | null>(null);
+  const [confirmRemoveTaskId, setConfirmRemoveTaskId] = useState<string | null>(
+    null
+  );
 
   const containerRef = useRef<HTMLDivElement>(null);
   const ganttRef = useRef<Gantt | null>(null);
@@ -104,6 +112,10 @@ export const GanttScheduleSection: React.FC<GanttScheduleSectionProps> = ({
   const didInitialScrollRef = useRef(false);
   const lastScrollRef = useRef(0);
   const clampNotifiedRef = useRef<Set<string>>(new Set());
+  // Single click opens the details modal after a short delay so a
+  // double-click can take precedence; a completed drag must never open it.
+  const clickOpenTimerRef = useRef<number | null>(null);
+  const dragOccurredRef = useRef(false);
 
   const scheduleData = useMemo(() => {
     if (!estimate) return null;
@@ -194,6 +206,7 @@ export const GanttScheduleSection: React.FC<GanttScheduleSectionProps> = ({
     const target = event.target as Element | null;
     const wrapper = target ? target.closest('.bar-wrapper') : null;
     draggedBarIdRef.current = wrapper ? wrapper.getAttribute('data-id') : null;
+    if (wrapper) dragOccurredRef.current = false;
     // The library draws `.handle.left` / `.handle.right` rects inside the
     // wrapper; grabbing either one resizes instead of moving.
     resizingRef.current = Boolean(
@@ -282,6 +295,7 @@ export const GanttScheduleSection: React.FC<GanttScheduleSectionProps> = ({
         on_date_change: (task, start, end) => {
           // Followers of a dependency-chain drag report dates too; ignore them.
           if (task.id !== draggedBarIdRef.current) return;
+          dragOccurredRef.current = true;
           const source = taskByIdRef.current.get(task.id);
           if (!source) return;
           const nextStart = formatDateYMD(start);
@@ -301,8 +315,32 @@ export const GanttScheduleSection: React.FC<GanttScheduleSectionProps> = ({
           }
           if (Object.keys(patch).length > 0) queueCommit(task.id, patch);
         },
-        // Double-click (or double-tap) opens the details modal.
-        on_double_click: (task) => setDetailsTaskId(task.id),
+        // Single click opens the details modal (after a beat so a double-click
+        // can take precedence). The library fires `click` even after a
+        // completed drag/resize, so suppress that via dragOccurredRef.
+        on_click: (task) => {
+          if (dragOccurredRef.current) {
+            dragOccurredRef.current = false;
+            return;
+          }
+          ganttRef.current?.hide_popup();
+          if (clickOpenTimerRef.current !== null) {
+            window.clearTimeout(clickOpenTimerRef.current);
+          }
+          clickOpenTimerRef.current = window.setTimeout(() => {
+            clickOpenTimerRef.current = null;
+            setDetailsTaskId(task.id);
+          }, 300);
+        },
+        // Double-click (or double-tap) opens the details modal immediately.
+        on_double_click: (task) => {
+          if (clickOpenTimerRef.current !== null) {
+            window.clearTimeout(clickOpenTimerRef.current);
+            clickOpenTimerRef.current = null;
+          }
+          ganttRef.current?.hide_popup();
+          setDetailsTaskId(task.id);
+        },
       });
       // First paint: pull the scroll position onto the first bar so the
       // schedule starts at the left edge of the viewport instead of `padding`
@@ -326,6 +364,10 @@ export const GanttScheduleSection: React.FC<GanttScheduleSectionProps> = ({
     }
 
     return () => {
+      if (clickOpenTimerRef.current !== null) {
+        window.clearTimeout(clickOpenTimerRef.current);
+        clickOpenTimerRef.current = null;
+      }
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
       if (ganttRef.current && ganttRef.current.$container) {
         lastScrollRef.current = ganttRef.current.$container.scrollLeft;
@@ -438,6 +480,10 @@ export const GanttScheduleSection: React.FC<GanttScheduleSectionProps> = ({
   }
 
   const { projectEndDate, totalWorkdays, criticalPathTaskIds } = scheduleData!;
+
+  const confirmRemoveTask = confirmRemoveTaskId
+    ? (scheduleData?.tasks.find((t) => t.task_id === confirmRemoveTaskId) ?? null)
+    : null;
 
   return (
     <div className="space-y-6">
@@ -559,7 +605,7 @@ export const GanttScheduleSection: React.FC<GanttScheduleSectionProps> = ({
             <span className="font-semibold text-slate-900">Timeline:</span>
             <span>
               {viewMode} scale &bull; business days (Mon – Fri), weekends shaded
-              &bull; drag bars to move or resize
+              &bull; drag bars to move or resize, click for details
             </span>
           </div>
 
@@ -641,11 +687,19 @@ export const GanttScheduleSection: React.FC<GanttScheduleSectionProps> = ({
                 <th className="px-3 py-2 text-right">Workdays</th>
                 <th className="px-3 py-2">Predecessors</th>
                 <th className="px-5 py-2">Dependency</th>
+                <th className="px-3 py-2 text-right">Remove</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {tasks.map((task) => (
-                <tr key={task.task_id} className="hover:bg-slate-50/70">
+                <tr
+                  key={task.task_id}
+                  className="hover:bg-slate-50/70 cursor-pointer"
+                  onClick={(event) => {
+                    if ((event.target as Element).closest('button')) return;
+                    setDetailsTaskId(task.task_id);
+                  }}
+                >
                   <td className="px-5 py-2">
                     <div className="flex items-center gap-2">
                       <span
@@ -691,6 +745,17 @@ export const GanttScheduleSection: React.FC<GanttScheduleSectionProps> = ({
                       <span className="text-slate-400">Float</span>
                     )}
                   </td>
+                  <td className="px-3 py-2 text-right">
+                    <button
+                      type="button"
+                      aria-label={`Remove ${task.task_id} from schedule`}
+                      title={`Remove ${task.task_id}`}
+                      onClick={() => setConfirmRemoveTaskId(task.task_id)}
+                      className="p-1.5 rounded-lg text-slate-300 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -699,9 +764,10 @@ export const GanttScheduleSection: React.FC<GanttScheduleSectionProps> = ({
         <div className="px-5 py-3 border-t border-slate-100 flex items-center gap-2 text-[11px] text-slate-500">
           <Clock className="w-3.5 h-3.5" />
           <span>
-            Hover a bar for a quick summary, drag it to reschedule, drag either
-            edge to change its duration, or double-click for full details.
-            Pinned bars show a pin icon and can be reset from their details.
+            Hover a bar for a quick summary, click a bar or row to open editable
+            details (workdays, predecessors, remove), or drag bars to
+            reschedule. Pinned bars show a pin icon and can be reset from their
+            details.
           </span>
         </div>
       </div>
@@ -709,7 +775,13 @@ export const GanttScheduleSection: React.FC<GanttScheduleSectionProps> = ({
       {detailsTask && (
         <TaskDetailsModal
           task={detailsTask}
+          allTaskIds={tasks.map((t) => t.task_id)}
           onClose={() => setDetailsTaskId(null)}
+          onUpdateTrade={onUpdateTrade}
+          onRemoveTrade={(taskId) => {
+            onRemoveTrade(taskId);
+            setDetailsTaskId(null);
+          }}
           onResetManualDates={(taskId) =>
             onUpdateTrade(taskId, { schedule_start_override: undefined })
           }
@@ -717,8 +789,28 @@ export const GanttScheduleSection: React.FC<GanttScheduleSectionProps> = ({
             setDetailsTaskId(null);
             onNavigateSection('packages');
           }}
+          onShowToast={onShowToast}
         />
       )}
+
+      <ConfirmModal
+        isOpen={confirmRemoveTask !== null}
+        title={`Remove ${confirmRemoveTask?.task_id ?? ''} from schedule?`}
+        subtitle={confirmRemoveTask?.trade_name}
+        message={`${confirmRemoveTask?.task_id ?? ''} (${confirmRemoveTask?.trade_name ?? ''}) will be permanently removed from the estimate's trade packages.`}
+        consequence={`Any other task that lists ${confirmRemoveTask?.task_id ?? ''} as a predecessor will have that dependency cleared and will re-sequence from the project start.`}
+        confirmLabel="Remove Task"
+        isDestructive
+        onConfirm={() => {
+          const id = confirmRemoveTaskId;
+          if (id) {
+            onRemoveTrade(id);
+            if (detailsTaskId === id) setDetailsTaskId(null);
+          }
+          setConfirmRemoveTaskId(null);
+        }}
+        onCancel={() => setConfirmRemoveTaskId(null)}
+      />
     </div>
   );
 };

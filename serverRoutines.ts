@@ -26,6 +26,7 @@ export function healthPayload() {
     capabilities: [
       'budget-engine-v2',
       'material-allowance',
+      'customer-selections',
       'deterministic-audit',
       'json-repair-retries',
       'field-work-orders',
@@ -47,12 +48,21 @@ function isEstimateWithTradeSections(value: unknown): value is EstimateResult {
 
 export async function runProcessEstimate(payload: {
   pdfBase64?: unknown;
+  componentsPdfBase64?: unknown;
   textContent?: unknown;
   prompt?: unknown;
   filename?: unknown;
+  componentsFilename?: unknown;
 }): Promise<RoutineResult> {
   try {
-    const { pdfBase64, textContent, prompt, filename } = payload || {};
+    const {
+      pdfBase64,
+      componentsPdfBase64,
+      textContent,
+      prompt,
+      filename,
+      componentsFilename,
+    } = payload || {};
     const apiKey = process.env.DEEPSEEK_API_KEY;
 
     if (!apiKey) {
@@ -95,6 +105,22 @@ export async function runProcessEstimate(payload: {
         status: 400,
         body: { error: 'Please provide either a PDF file or text content.' },
       };
+    }
+
+    // Optional second upload: the Xactimate Component Breakdown Report. Its
+    // text is merged into the SAME extraction pass beneath a marker header,
+    // so the engine's "Case A" rule (exact component quantities, no added
+    // waste factors) applies to the material allowance roll-up — one AI call,
+    // one reconciled estimate.
+    if (typeof componentsPdfBase64 === 'string' && componentsPdfBase64) {
+      const componentText = await extractPdfText(componentsPdfBase64);
+      if (componentText.trim()) {
+        const componentLabel =
+          typeof componentsFilename === 'string' && componentsFilename
+            ? componentsFilename
+            : 'component breakdown report';
+        sourceText = `${sourceText}\n\n===== COMPONENT BREAKDOWN REPORT (${componentLabel}) =====\n\n${componentText}`;
+      }
     }
 
     const clippedText =

@@ -15,6 +15,7 @@
     "lint": "tsc --noEmit",
     "verify:budget": "tsx scripts/verify-budget-engine.ts",
     "verify:workorders": "tsx scripts/verify-work-order-pdf.ts",
+    "verify:selections": "tsx scripts/verify-customer-selections.ts",
     "verify:pdf-extract": "tsx scripts/verify-pdf-extract.ts",
     "icons": "node scripts/generate-icons.mjs"
   },

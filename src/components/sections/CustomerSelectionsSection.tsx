@@ -24,6 +24,7 @@ import {
   buildCustomerSelectionsPdf,
   customerSelectionsPdfFilename,
 } from '../../utils/customerSelectionsPdf';
+import { saveCustomerProfile, uploadCustomerPdf } from '../../services/gappsApi';
 
 interface CustomerSelectionsSectionProps {
   estimate: EstimateResult | null;
@@ -213,8 +214,22 @@ export const CustomerSelectionsSection: React.FC<CustomerSelectionsSectionProps>
     setGenerating(true);
     try {
       const bytes = await buildCustomerSelectionsPdf(estimate);
-      downloadBytes(bytes, customerSelectionsPdfFilename(estimate));
-      onShowToast('success', 'Customer Selections & Material Allowance Sheet downloaded.');
+      const filename = customerSelectionsPdfFilename(estimate);
+      downloadBytes(bytes, filename);
+      let workspaceSaved = false;
+      try {
+        const profile = await saveCustomerProfile(estimate);
+        await uploadCustomerPdf(profile.customer_id, filename, bytes);
+        workspaceSaved = true;
+      } catch (uploadErr: any) {
+        console.error('Workspace auto-save failed', uploadErr);
+      }
+      onShowToast(
+        workspaceSaved ? 'success' : 'warning',
+        workspaceSaved
+          ? 'Customer Selections & Material Allowance Sheet downloaded · saved to workspace record.'
+          : 'Allowance sheet downloaded — workspace auto-save failed.'
+      );
     } catch (err: any) {
       onShowToast('error', err?.message || 'Failed to build the allowance sheet.');
     } finally {

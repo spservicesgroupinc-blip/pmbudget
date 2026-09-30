@@ -15,8 +15,9 @@ import {
 } from './types/estimate';
 import { SAMPLE_ESTIMATES } from './services/sampleEstimates';
 import { generateFinalWorkOrders, isBudgetAdjusted } from './services/workOrderGeneration';
-import { initAuth, googleSignIn, logout } from './services/firebaseAuth';
-import { User } from 'firebase/auth';
+import { getCurrentUser, logout, verifySession, GappsUser } from './services/gappsAuth';
+import { saveCustomerProfile, CustomerProfileSummary } from './services/gappsApi';
+import { LoginPage } from './components/LoginPage';
 
 // Keep in sync with the EntryCard upload guard. Vercel serverless request bodies cap at ~4.5MB; base64 inflates by ~4/3.
 const MAX_SERVERLESS_PDF_BYTES = 3.2 * 1024 * 1024;
@@ -58,6 +59,11 @@ const CustomerSelectionsSection = lazy(() =>
     default: m.CustomerSelectionsSection,
   }))
 );
+const CustomersSection = lazy(() =>
+  import('./components/sections/CustomersSection').then((m) => ({
+    default: m.CustomersSection,
+  }))
+);
 
 // Fallback shown while a lazy-loaded section chunk downloads.
 const SectionFallback = () => (
@@ -77,9 +83,8 @@ export default function App() {
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState<boolean>(false);
 
-  // Google Workspace Auth State
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [accessToken, setAccessToken] = useState<string | null>(null);
+  // Google Workspace session (Sheets-backed login via the Apps Script backend)
+  const [currentUser, setCurrentUser] = useState<GappsUser | null>(() => getCurrentUser());
 
   // Confirm Modal state
   const [confirmModal, setConfirmModal] = useState<{
@@ -98,20 +103,15 @@ export default function App() {
     onConfirm: () => {},
   });
 
-  // Initialize Firebase Auth listener
+  // Validate the persisted Sheets session on mount (revoked/expired sessions
+  // fall back to the login page).
   useEffect(() => {
-    const unsubscribe = initAuth(
-      (user, token) => {
-        setCurrentUser(user);
-        setAccessToken(token);
-      },
-      () => {
-        setCurrentUser(null);
-        setAccessToken(null);
-      }
-    );
+    let cancelled = false;
+    verifySession().then((user) => {
+      if (!cancelled) setCurrentUser(user);
+    });
     return () => {
-      if (typeof unsubscribe === 'function') unsubscribe();
+      cancelled = true;
     };
   }, []);
 
@@ -123,30 +123,14 @@ export default function App() {
     });
   };
 
-  const handleSignIn = async () => {
-    try {
-      const result = await googleSignIn();
-      if (result) {
-        setCurrentUser(result.user);
-        setAccessToken(result.accessToken);
-        showToast('success', `Signed in as ${result.user.displayName || result.user.email}`);
-      }
-    } catch (err: any) {
-      console.error(err);
-      showToast('error', err.message || 'Google Workspace sign-in failed');
-    }
-  };
-
   const handleSignOut = async () => {
     try {
       await logout();
-      setCurrentUser(null);
-      setAccessToken(null);
-      showToast('success', 'Signed out from Google Workspace');
     } catch (err: any) {
       console.error(err);
-      showToast('error', 'Sign out failed');
     }
+    setCurrentUser(null);
+    showToast('success', 'Signed out');
   };
 
   const handleReset = () => {
@@ -235,6 +219,7 @@ export default function App() {
 
       setCurrentEstimate(data);
       setHasUnsavedChanges(false);
+      autoSaveCustomerProfile(data);
       const warns = data.processing?.warnings || [];
       const selCount = data.customer_selections?.length || 0;
       showToast(
@@ -282,6 +267,7 @@ export default function App() {
 
       setCurrentEstimate(data);
       setHasUnsavedChanges(false);
+      autoSaveCustomerProfile(data);
       const warns = data.processing?.warnings || [];
       showToast(
         warns.length > 0 ? 'warning' : 'success',
@@ -479,14 +465,56 @@ export default function App() {
     setHasUnsavedChanges(true);
   };
 
+  // Opens a saved customer profile record back into the active session.
+  const handleOpenCustomerProfile = (
+    estimate: EstimateResult,
+    profile: CustomerProfileSummary
+  ) => {
+    setCurrentEstimate(estimate);
+    setHasUnsavedChanges(false);
+    setErrorMessage(null);
+    showToast(
+      'success',
+      `Opened customer profile — ${profile.client_name} (Claim ${profile.claim_number}).`
+    );
+    setActiveSection('intake');
+  };
+
+  // Fire-and-forget customer profile save after a fresh extraction.
+  const autoSaveCustomerProfile = (estimate: EstimateResult) => {
+    void saveCustomerProfile(estimate)
+      .then((profile) =>
+        showToast(
+          'success',
+          `Customer profile saved — ${profile.client_name} (Claim ${profile.claim_number}).`
+        )
+      )
+      .catch((err: any) =>
+        showToast(
+          'warning',
+          `Customer profile auto-save failed: ${err?.message || 'unknown error'}`
+        )
+      );
+  };
+
+  // Sheets-based login gates the entire app (see instructions/apps-script-deployment.md).
+  if (!currentUser) {
+    return (
+      <LoginPage
+        onAuthenticated={(user) => {
+          setCurrentUser(user);
+          showToast('success', `Signed in as ${user.email}`);
+        }}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col text-slate-900 font-sans antialiased selection:bg-red-500/20">
       {/* Header */}
       <Header
         currentEstimate={currentEstimate}
         currentUser={currentUser}
-        accessToken={accessToken}
-        onSignIn={handleSignIn}
         onSignOut={handleSignOut}
         onReset={handleReset}
         onNavigateSection={setActiveSection}
@@ -562,8 +590,6 @@ export default function App() {
                 <WorkspaceSyncSection
                   estimate={currentEstimate}
                   currentUser={currentUser}
-                  accessToken={accessToken}
-                  onSignIn={handleSignIn}
                   onShowToast={showToast}
                 />
               )}
@@ -574,8 +600,6 @@ export default function App() {
                   onShowToast={showToast}
                   onNavigateSection={setActiveSection}
                   onApplyWorkOrders={handleApplyWorkOrders}
-                  accessToken={accessToken}
-                  onSignIn={handleSignIn}
                 />
               )}
 
@@ -584,6 +608,14 @@ export default function App() {
                   estimate={currentEstimate}
                   onUpdateSelections={handleUpdateSelections}
                   onNavigateSection={setActiveSection}
+                  onShowToast={showToast}
+                />
+              )}
+
+              {activeSection === 'customers' && (
+                <CustomersSection
+                  currentEstimate={currentEstimate}
+                  onOpenProfile={handleOpenCustomerProfile}
                   onShowToast={showToast}
                 />
               )}

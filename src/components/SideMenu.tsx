@@ -9,6 +9,7 @@ import {
   ClipboardList,
   Palette,
   Plus,
+  Users,
   UploadCloud,
 } from 'lucide-react';
 import { EstimateResult } from '../types/estimate';
@@ -73,6 +74,16 @@ export const SideMenu: React.FC<SideMenuProps> = ({
           label: 'Gantt Schedule',
           icon: GanttChartSquare,
           badge: tradeCount > 0 ? `${tradeCount}T` : undefined,
+        },
+      ],
+    },
+    {
+      label: 'Records',
+      items: [
+        {
+          id: 'customers',
+          label: 'Customer Profiles',
+          icon: Users,
         },
       ],
     },

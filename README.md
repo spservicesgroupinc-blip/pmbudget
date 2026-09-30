@@ -14,6 +14,22 @@ Google Workspace export and **crew-ready Subcontractor Field Work Orders (PDF)**
    live in the `env/` folder — see [env/README.md](env/README.md) for the full inventory.
 3. Run the app: `npm run dev` → http://localhost:3000
 
+## Login & Google Workspace backend
+
+The app is gated by a **login page backed by Google Sheets** (no Firebase). Credentials are
+verified against the `Users` sheet of an Apps Script database spreadsheet; sessions are issued
+with expiring tokens, and every export (Sheets budget, Docs scope agreement, Calendar milestones,
+Drive JSON + PDFs) is written into the script owner's Google account via one Apps Script web app
+and logged to the `Exports` sheet.
+
+- Backend: [`apps-script/Code.gs`](apps-script/Code.gs) (single file) — deploy with
+  [instructions/apps-script-deployment.md](instructions/apps-script-deployment.md); its `/exec`
+  URL and `APP_KEY` go in `env/gapps-config.json`.
+- Client: `src/services/gappsAuth.ts` (login/session) + `src/services/gappsApi.ts` (exports) +
+  `src/components/LoginPage.tsx` (gate).
+- **Local dev without a deployment** falls back to a built-in mock endpoint
+  (`/api/gapps-mock` in `server.ts`): sign in with `demo@hayssons.com` / `restore2026`.
+
 ## AI Pipeline (budget-engine-v2)
 
 `POST /api/process-estimate` (PDF or pasted text) runs a two-stage pipeline:
@@ -115,8 +131,11 @@ Generated packet artifacts land in `scripts/__verify_tmp/out-workorder-<sample>.
   contract attachment (`attachWorkOrderContracts` / `formatMoney`), redaction, fallbacks ·
   `src/utils/workOrderPdf.ts` — pdf-lib packet renderer (CONTRACT AMOUNT & BUDGET LINE LINKAGE)
 - `src/utils/scheduler.ts` — business-day FS scheduler (Gantt + critical path)
+- `src/services/gappsAuth.ts` — Sheets-backed login/session · `src/services/gappsApi.ts` —
+  Sheets/Docs/Calendar/Drive exports via the Apps Script backend · `src/components/LoginPage.tsx` — sign-in gate
+- `apps-script/Code.gs` — the Apps Script web app (auth + exports + audit log)
 - `pdfText.ts` — pdfjs-dist text extraction for uploaded PDFs
-- `scripts/` — verification scripts · `instructions/` — source specs (budget + work orders)
+- `scripts/` — verification scripts · `instructions/` — source specs (budget, work orders, Apps Script deployment)
 
 View the original app in AI Studio: https://ai.studio/apps/4faab206-47ef-4665-8fdf-83ca45aa13b3
 

@@ -13,30 +13,26 @@ import {
   ArrowUpRight,
 } from 'lucide-react';
 import { EstimateResult } from '../../types/estimate';
-import { User } from 'firebase/auth';
+import { GappsUser } from '../../services/gappsAuth';
 import {
   createSheetsBudget,
   createDocsScopeAgreement,
   syncCalendarEvents,
   savePackageToDrive,
   WorkspaceExportResult,
-} from '../../services/workspaceApi';
+} from '../../services/gappsApi';
 import { computeSchedule, getNextMonday } from '../../utils/scheduler';
 import { ConfirmModal } from '../ConfirmModal';
 
 interface WorkspaceSyncSectionProps {
   estimate: EstimateResult | null;
-  currentUser: User | null;
-  accessToken: string | null;
-  onSignIn: () => void;
+  currentUser: GappsUser | null;
   onShowToast: (type: 'success' | 'warning' | 'error', message: string) => void;
 }
 
 export const WorkspaceSyncSection: React.FC<WorkspaceSyncSectionProps> = ({
   estimate,
   currentUser,
-  accessToken,
-  onSignIn,
   onShowToast,
 }) => {
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
@@ -72,13 +68,9 @@ export const WorkspaceSyncSection: React.FC<WorkspaceSyncSectionProps> = ({
 
   // 1. Export to Google Sheets
   const handleExportSheets = async () => {
-    if (!accessToken) {
-      onSignIn();
-      return;
-    }
     setLoadingAction('sheets');
     try {
-      const res = await createSheetsBudget(accessToken, estimate, 60);
+      const res = await createSheetsBudget(estimate, 60);
       setCreatedItems((prev) => [res, ...prev.filter((i) => i.type !== 'sheets')]);
       onShowToast('success', 'Google Sheet created successfully!');
     } catch (err: any) {
@@ -91,13 +83,9 @@ export const WorkspaceSyncSection: React.FC<WorkspaceSyncSectionProps> = ({
 
   // 2. Export to Google Docs
   const handleExportDocs = async () => {
-    if (!accessToken) {
-      onSignIn();
-      return;
-    }
     setLoadingAction('docs');
     try {
-      const res = await createDocsScopeAgreement(accessToken, estimate, getNextMonday());
+      const res = await createDocsScopeAgreement(estimate, getNextMonday());
       setCreatedItems((prev) => [res, ...prev.filter((i) => i.type !== 'docs')]);
       onShowToast('success', 'Google Docs agreement created!');
     } catch (err: any) {
@@ -110,10 +98,6 @@ export const WorkspaceSyncSection: React.FC<WorkspaceSyncSectionProps> = ({
 
   // 3. Sync to Google Calendar (with confirmation modal)
   const promptCalendarSync = () => {
-    if (!accessToken) {
-      onSignIn();
-      return;
-    }
     const schedule = computeSchedule(estimate.trade_sections, getNextMonday());
     setConfirmModal({
       isOpen: true,
@@ -125,7 +109,7 @@ export const WorkspaceSyncSection: React.FC<WorkspaceSyncSectionProps> = ({
         setConfirmModal((prev) => ({ ...prev, isOpen: false }));
         setLoadingAction('calendar');
         try {
-          const res = await syncCalendarEvents(accessToken, estimate, schedule.tasks);
+          const res = await syncCalendarEvents(estimate, schedule.tasks);
           setCreatedItems((prev) => [res, ...prev.filter((i) => i.type !== 'calendar')]);
           onShowToast(
             'success',
@@ -143,13 +127,9 @@ export const WorkspaceSyncSection: React.FC<WorkspaceSyncSectionProps> = ({
 
   // 4. Save to Google Drive
   const handleSaveDrive = async () => {
-    if (!accessToken) {
-      onSignIn();
-      return;
-    }
     setLoadingAction('drive');
     try {
-      const res = await savePackageToDrive(accessToken, estimate);
+      const res = await savePackageToDrive(estimate);
       setCreatedItems((prev) => [res, ...prev.filter((i) => i.type !== 'drive')]);
       onShowToast('success', 'Project JSON package saved to Google Drive!');
     } catch (err: any) {
@@ -176,36 +156,28 @@ export const WorkspaceSyncSection: React.FC<WorkspaceSyncSectionProps> = ({
                 </h3>
                 <span
                   className={`text-[11px] font-semibold px-2 py-0.5 rounded border ${
-                    currentUser && accessToken
+                    currentUser
                       ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                       : 'bg-amber-50 text-amber-700 border-amber-200'
                   }`}
                 >
-                  {currentUser && accessToken ? 'Connected' : 'Sign-in Required'}
+                  {currentUser ? 'Connected' : 'Sign-in Required'}
                 </span>
               </div>
               <p className="text-[12px] text-slate-500 mt-0.5">
-                {currentUser && accessToken
-                  ? `Connected as ${currentUser.email} with authorization for Sheets, Docs, Calendar, and Drive.`
-                  : 'Connect your Google account to export live spreadsheets, subcontractor agreements, and calendar schedules.'}
+                {currentUser
+                  ? `Connected as ${currentUser.email} — Sheets, Docs, Calendar, and Drive exports are written to the Hays + Sons workspace via Apps Script.`
+                  : 'Sign in to export live spreadsheets, subcontractor agreements, and calendar schedules.'}
               </p>
             </div>
           </div>
 
           <div>
-            {currentUser && accessToken ? (
+            {currentUser && (
               <div className="flex items-center gap-2 text-[12px] text-emerald-800 font-medium bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-lg">
                 <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                 <span>Ready to Sync</span>
               </div>
-            ) : (
-              <button
-                type="button"
-                onClick={onSignIn}
-                className="inline-flex items-center gap-2 h-10 px-4 rounded-lg bg-red-600 text-white hover:bg-red-700 font-semibold text-[13px] shadow-sm transition-colors"
-              >
-                <span>Connect Google Workspace</span>
-              </button>
             )}
           </div>
         </div>

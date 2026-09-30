@@ -33,7 +33,7 @@ import {
 } from '../../utils/workOrders';
 import { generateFinalWorkOrders } from '../../services/workOrderGeneration';
 import { buildAllCrewWorkOrderPdfs, buildCrewWorkOrderPdf } from '../../utils/workOrderPdf';
-import { uploadWorkOrderPdf } from '../../services/workspaceApi';
+import { saveCustomerProfile, uploadCustomerPdf } from '../../services/gappsApi';
 import { mapWithConcurrency } from '../../utils/concurrency';
 
 interface WorkOrdersSectionProps {
@@ -45,8 +45,6 @@ interface WorkOrdersSectionProps {
     siteLogistics?: WorkOrderSiteLogistics,
     generatedAt?: string
   ) => void;
-  accessToken?: string | null;
-  onSignIn?: () => void;
 }
 
 /** Triggers a client-side download of generated PDF bytes. */
@@ -68,8 +66,6 @@ export const WorkOrdersSection: React.FC<WorkOrdersSectionProps> = ({
   onShowToast,
   onNavigateSection,
   onApplyWorkOrders,
-  accessToken,
-  onSignIn,
 }) => {
   const [generating, setGenerating] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -176,7 +172,20 @@ export const WorkOrdersSection: React.FC<WorkOrdersSectionProps> = ({
     try {
       const bytes = await buildCrewWorkOrderPdf(estimate, crew);
       downloadBytes(bytes, crewWorkOrderPdfFilename(estimate, crew));
-      onShowToast('success', `Downloaded work order for ${crew.crew_name}`);
+      let workspaceSaved = false;
+      try {
+        const profile = await saveCustomerProfile(estimate);
+        await uploadCustomerPdf(profile.customer_id, crewWorkOrderPdfFilename(estimate, crew), bytes);
+        workspaceSaved = true;
+      } catch (uploadErr: any) {
+        console.error('Workspace auto-save failed', uploadErr);
+      }
+      onShowToast(
+        workspaceSaved ? 'success' : 'warning',
+        workspaceSaved
+          ? `Downloaded ${crew.crew_name} work order · saved to workspace record`
+          : `Downloaded ${crew.crew_name} work order — workspace auto-save failed`
+      );
     } catch (err: any) {
       onShowToast('error', err?.message || 'Work order PDF generation failed');
     } finally {
@@ -193,9 +202,21 @@ export const WorkOrdersSection: React.FC<WorkOrdersSectionProps> = ({
         downloadBytes(artifact.bytes, artifact.filename);
         await delay(350);
       }
+      let workspaceSaved = false;
+      try {
+        const profile = await saveCustomerProfile(estimate);
+        await mapWithConcurrency(artifacts, 3, (artifact) =>
+          uploadCustomerPdf(profile.customer_id, artifact.filename, artifact.bytes)
+        );
+        workspaceSaved = true;
+      } catch (uploadErr: any) {
+        console.error('Workspace auto-save failed', uploadErr);
+      }
       onShowToast(
-        'success',
-        `Downloaded ${artifacts.length} separate crew PDFs — one document per subcontractor`
+        workspaceSaved ? 'success' : 'warning',
+        workspaceSaved
+          ? `Downloaded ${artifacts.length} separate crew PDFs · saved to workspace record`
+          : `Downloaded ${artifacts.length} separate crew PDFs — workspace auto-save failed`
       );
     } catch (err: any) {
       onShowToast('error', err?.message || 'Work order PDF generation failed');
@@ -206,19 +227,21 @@ export const WorkOrdersSection: React.FC<WorkOrdersSectionProps> = ({
 
   const saveToDrive = async () => {
     if (crews.length === 0) return;
-    if (!accessToken) {
-      onSignIn?.();
-      return;
-    }
     setSavingDrive(true);
     try {
       const artifacts = await buildAllCrewWorkOrderPdfs(estimate);
+      // Auto-save: the estimate becomes (or updates) the customer profile so
+      // every generated PDF is stored under the customer's workspace record.
+      const profile = await saveCustomerProfile(estimate);
       // Independent Drive uploads — up to 3 in flight; the first failed upload
       // still aborts the batch and surfaces through the same error toast.
       const uploads = await mapWithConcurrency(artifacts, 3, (artifact) =>
-        uploadWorkOrderPdf(accessToken, estimate, artifact.bytes, artifact.filename)
+        uploadCustomerPdf(profile.customer_id, artifact.filename, artifact.bytes)
       );
-      onShowToast('success', `Saved ${uploads.length} separate crew PDF(s) to Google Drive`);
+      onShowToast(
+        'success',
+        `Saved ${uploads.length} crew PDF(s) to the ${profile.client_name} customer folder`
+      );
     } catch (err: any) {
       onShowToast('error', err?.message || 'Google Drive upload failed');
     } finally {
@@ -307,7 +330,7 @@ export const WorkOrdersSection: React.FC<WorkOrdersSectionProps> = ({
               ) : (
                 <HardDrive className="w-3.5 h-3.5" />
               )}
-              <span>{accessToken ? 'Save PDF to Drive' : 'Sign in to save to Drive'}</span>
+              <span>Save PDFs to Drive</span>
             </button>
           </div>
         </div>

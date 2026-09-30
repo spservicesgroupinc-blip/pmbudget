@@ -7,7 +7,7 @@ Everything this project needs to run (locally, in AI Studio, and on Vercel) is l
 | --- | --- | --- |
 | `.env.local` | No — git-ignored via `.env*` | Your real local secrets (copy from `.env.example`) |
 | `.env.example` | Yes | Template with every supported variable |
-| `firebase-applet-config.json` | Yes | Firebase web app config (public client keys, not secret) |
+| `gapps-config.json` | Yes | Google Apps Script backend config — `webAppUrl` (the deployed /exec URL) + `appKey` |
 
 ## How they are loaded
 
@@ -17,8 +17,11 @@ Everything this project needs to run (locally, in AI Studio, and on Vercel) is l
 - Vite (`vite.config.ts`): `envDir: 'env'` — client-exposed vars must use the `VITE_` prefix.
 - Vercel: files here are **not deployed**; set the same variables in
   Project → Settings → Environment Variables.
-- Firebase: `src/services/firebaseAuth.ts` imports `env/firebase-applet-config.json` directly
-  (Firebase web config is public by design — never put server secrets in it).
+- Apps Script backend: `src/services/gappsAuth.ts` imports `env/gapps-config.json`
+  directly. `webAppUrl` is the deployed web-app `/exec` URL and `appKey` is the
+  `APP_KEY` script property — the client bundle ships both (like the old Firebase
+  config), so keep the deployment URL internal. See
+  `instructions/apps-script-deployment.md` for the full deployment flow.
 
 ## Variable inventory
 
@@ -32,7 +35,7 @@ Everything this project needs to run (locally, in AI Studio, and on Vercel) is l
 | `PORT` | No | `server.ts` | Default `3000` |
 | `NODE_ENV` | No | `server.ts` | `production` serves the built `dist/` app; otherwise Vite middleware |
 | `DISABLE_HMR` | No | `vite.config.ts` | AI Studio sets `true` to disable file watching |
-| Firebase web config (in `firebase-applet-config.json`) | Yes | `src/services/firebaseAuth.ts` | Public web keys; replace the file to point at a different Firebase project |
+| Apps Script backend config (in `gapps-config.json`) | Yes | `src/services/gappsAuth.ts` | `webAppUrl` + `appKey`; fill in after deploying the Apps Script web app (see `instructions/apps-script-deployment.md`) |
 
 ## Deploying env changes to Vercel (learned the hard way, 2026-09-29)
 

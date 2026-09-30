@@ -101,6 +101,13 @@ Restart the dev server if it was running, reload the app, and sign in.
 - After setting `APP_KEY`/`ADMIN_SETUP_KEY` and running `setup()`, paste the
   real `APP_KEY` into `env/gapps-config.json` (the placeholder keeps local dev
   on the built-in mock).
+- **Keys generated 2026-09-30** (not yet stored in the Apps Script script
+  properties — this is the remaining manual step):
+  - `APP_KEY` = `w9Fsv10VA9Z8e9lrdPO4rvcBnasQ7DCG5sPtKEMuDU` (already in `env/gapps-config.json` and `env/.env.vercel`)
+  - `ADMIN_SETUP_KEY` = `gtAxeFifZEpVfNx8QI1BaMOfl0C96TEDiLgfEhkvLOU`
+  Paste both into **Project Settings → Script properties** in the Apps Script
+  editor. Until then the backend answers `Backend is not configured: APP_KEY
+  script property is missing.`
 
 ## Operational notes
 

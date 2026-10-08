@@ -3,6 +3,10 @@
 Everything this project needs to run (locally, in AI Studio, and on Vercel) is listed here.
 **All local env files and key files live in this folder.**
 
+Only two connection settings are required: `DEEPSEEK_API_KEY` for the server
+and the Apps Script `webAppUrl` in `gapps-config.json`. The settings below
+for models, ports, and hosting are optional.
+
 | File | Committed? | Purpose |
 | --- | --- | --- |
 | `.env.local` | No — git-ignored via `.env*` | Your real local secrets (copy from `.env.example`) |
@@ -20,7 +24,7 @@ Everything this project needs to run (locally, in AI Studio, and on Vercel) is l
 - Apps Script backend: `src/services/gappsAuth.ts` imports `env/gapps-config.json`
   directly. `webAppUrl` is the deployed web-app `/exec` URL. Sign-up and login
   require no shared setup keys; saved jobs and exports require a signed-in
-  account session. Legacy `appKey` values and `VITE_GAPPS_APP_KEY` are ignored. See
+  account session. The only client connection setting is the deployment URL. See
   `instructions/apps-script-deployment.md` for the full deployment flow.
 
 ## Variable inventory

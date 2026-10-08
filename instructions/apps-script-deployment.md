@@ -42,8 +42,8 @@ Only the URL is required in the app config:
 }
 ```
 
-`VITE_GAPPS_WEB_APP_URL` can override that URL at build time. Existing `appKey`
-JSON values and `VITE_GAPPS_APP_KEY` environment variables are ignored.
+`VITE_GAPPS_WEB_APP_URL` can override that URL at build time. The only required
+connection settings are this Apps Script URL and the server's `DEEPSEEK_API_KEY`.
 Restart the dev server after changing environment variables.
 
 ## Database and accounts

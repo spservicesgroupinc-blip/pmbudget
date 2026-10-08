@@ -12,7 +12,9 @@ Google Workspace export and **crew-ready Subcontractor Field Work Orders (PDF)**
 2. Configure [env/.env.local](env/.env.local) with `DEEPSEEK_API_KEY` (optional: `DEEPSEEK_MODEL`
    default `deepseek-chat`, `DEEPSEEK_BASE_URL`, `DEEPSEEK_MAX_TOKENS`). All env vars/API keys
    live in the `env/` folder — see [env/README.md](env/README.md) for the full inventory.
-3. Run the app: `npm run dev` → http://localhost:3000
+3. Set `webAppUrl` in [env/gapps-config.json](env/gapps-config.json) to the deployed Apps Script `/exec` URL.
+   These are the only two required connection settings: the DeepSeek API key and Apps Script URL.
+4. Run the app: `npm run dev` → http://localhost:3000
 
 ## Login & Google Workspace backend
 
@@ -24,7 +26,8 @@ and logged to the `Exports` sheet.
 
 - Backend: [`apps-script/Code.gs`](apps-script/Code.gs) (single file) — deploy with
   [instructions/apps-script-deployment.md](instructions/apps-script-deployment.md); its `/exec`
-  URL and `APP_KEY` go in `env/gapps-config.json`.
+  URL goes in `env/gapps-config.json`. Sign-up needs no shared key; saved jobs and exports
+  require an individual account session.
 - Client: `src/services/gappsAuth.ts` (login/session) + `src/services/gappsApi.ts` (exports) +
   `src/components/LoginPage.tsx` (gate).
 - **Local dev without a deployment** falls back to a built-in mock endpoint

@@ -1,0 +1,16 @@
+[
+  "lib\\main.js",
+  "lib\\preload-app.cjs",
+  "lib\\preload-mandatory.cjs",
+  "lib\\preload-platform-account.cjs",
+  "lib\\preload-update-dialog.cjs",
+  "lib\\preload-welcome.cjs",
+  "lib\\welcome/",
+  "lib\\welcome\\Montserrat-OFL.txt",
+  "lib\\welcome\\brand-font.css",
+  "lib\\welcome\\montserrat-light.woff2",
+  "lib\\welcome\\montserrat-medium.woff2",
+  "lib\\welcome\\montserrat-regular.woff2",
+  "lib\\welcome\\welcome.css",
+  "lib\\welcome\\welcome.js"
+]

@@ -1,0 +1,368 @@
+{
+  "dsh": {
+    "bytes": 58909,
+    "entries": [
+      "LICENSE",
+      "README.i18n.yaml",
+      "README.md",
+      "README.zh.md",
+      "lib",
+      "package.json"
+    ]
+  },
+  "dsh-plugin-manager": {
+    "bytes": 340323,
+    "entries": [
+      "LICENSE",
+      "README.i18n.yaml",
+      "README.md",
+      "README.zh.md",
+      "lib",
+      "package.json"
+    ]
+  },
+  "dsh-package-manifest": {
+    "bytes": 12464,
+    "entries": [
+      "LICENSE",
+      "README.i18n.yaml",
+      "README.md",
+      "README.zh.md",
+      "lib",
+      "package.json"
+    ]
+  },
+  "dsh-host-plugin-inventory": {
+    "bytes": 38684,
+    "entries": [
+      "LICENSE",
+      "README.i18n.yaml",
+      "README.md",
+      "README.zh.md",
+      "lib",
+      "package.json"
+    ]
+  },
+  "dsh-plugin-package-inventory-deepseek": {
+    "bytes": 28844,
+    "entries": [
+      "LICENSE",
+      "README.i18n.yaml",
+      "README.md",
+      "README.zh.md",
+      "lib",
+      "package.json"
+    ]
+  },
+  "dsh-desktop-host": {
+    "bytes": 2785944,
+    "entries": [
+      "LICENSE",
+      "lib",
+      "node_modules",
+      "package.json"
+    ]
+  },
+  "dsh-session-log-export": {
+    "bytes": 587444,
+    "entries": [
+      "LICENSE",
+      "README.i18n.yaml",
+      "README.md",
+      "README.zh.md",
+      "lib",
+      "node_modules",
+      "package.json"
+    ]
+  },
+  "dsh-host-webserver": {
+    "bytes": 57004,
+    "entries": [
+      "LICENSE",
+      "README.i18n.yaml",
+      "README.md",
+      "README.zh.md",
+      "lib",
+      "node_modules",
+      "package.json"
+    ]
+  },
+  "dsh-client-modules": {
+    "bytes": 118285,
+    "entries": [
+      "LICENSE",
+      "README.i18n.yaml",
+      "README.md",
+      "README.zh.md",
+      "lib",
+      "package.json"
+    ]
+  },
+  "dsh-client-hmr": {
+    "bytes": 29125,
+    "entries": [
+      "LICENSE",
+      "README.i18n.yaml",
+      "README.md",
+      "README.zh.md",
+      "lib",
+      "package.json"
+    ]
+  },
+  "dsh-hmr": {
+    "bytes": 39497,
+    "entries": [
+      "LICENSE",
+      "README.i18n.yaml",
+      "README.md",
+      "README.zh.md",
+      "lib",
+      "package.json"
+    ]
+  },
+  "dsh-cordis-host-runner": {
+    "bytes": 459871,
+    "entries": [
+      "LICENSE",
+      "README.i18n.yaml",
+      "README.md",
+      "README.zh.md",
+      "lib",
+      "package.json"
+    ]
+  },
+  "dsh-cordis-client-runner": {
+    "bytes": 380323,
+    "entries": [
+      "LICENSE",
+      "README.i18n.yaml",
+      "README.md",
+      "README.zh.md",
+      "lib",
+      "package.json"
+    ]
+  },
+  "dsh-tools": {
+    "bytes": 421777,
+    "entries": [
+      "LICENSE",
+      "README.i18n.yaml",
+      "README.md",
+      "README.zh.md",
+      "lib",
+      "package.json"
+    ]
+  },
+  "dsh-tool-cordis": {
+    "bytes": 641572,
+    "entries": [
+      "LICENSE",
+      "README.i18n.yaml",
+      "README.md",
+      "README.zh.md",
+      "lib",
+      "package.json"
+    ]
+  },
+  "dsh-subprocess": {
+    "bytes": 35384,
+    "entries": [
+      "LICENSE",
+      "README.i18n.yaml",
+      "README.md",
+      "README.zh.md",
+      "lib",
+      "package.json"
+    ]
+  },
+  "dsh-settings": {
+    "bytes": 61492,
+    "entries": [
+      "LICENSE",
+      "README.i18n.yaml",
+      "README.md",
+      "README.zh.md",
+      "lib",
+      "package.json"
+    ]
+  },
+  "dsh-config-editor": {
+    "bytes": 17463,
+    "entries": [
+      "LICENSE",
+      "README.i18n.yaml",
+      "README.md",
+      "README.zh.md",
+      "lib",
+      "package.json"
+    ]
+  },
+  "dsh-sdk-app": {
+    "bytes": 17628,
+    "entries": [
+      "LICENSE",
+      "README.i18n.yaml",
+      "README.md",
+      "README.zh.md",
+      "cordis.patch.yml",
+      "lib",
+      "package.json"
+    ]
+  },
+  "dsh-sdk-protocol": {
+    "bytes": 28465,
+    "entries": [
+      "LICENSE",
+      "README.i18n.yaml",
+      "README.md",
+      "README.zh.md",
+      "lib",
+      "package.json"
+    ]
+  },
+  "dsh-sdk-jsonrpc-server": {
+    "bytes": 36047,
+    "entries": [
+      "LICENSE",
+      "README.i18n.yaml",
+      "README.md",
+      "README.zh.md",
+      "lib",
+      "package.json"
+    ]
+  },
+  "dsh-sdk-minimal": {
+    "bytes": 21881,
+    "entries": [
+      "LICENSE",
+      "README.i18n.yaml",
+      "README.md",
+      "README.zh.md",
+      "cordis.patch.yml",
+      "lib",
+      "package.json"
+    ]
+  },
+  "dsh-web": {
+    "bytes": 32672,
+    "entries": [
+      "LICENSE",
+      "README.i18n.yaml",
+      "README.md",
+      "README.zh.md",
+      "lib",
+      "package.json"
+    ]
+  },
+  "dsh-web-app": {
+    "bytes": 99503,
+    "entries": [
+      "LICENSE",
+      "README.i18n.yaml",
+      "README.md",
+      "README.zh.md",
+      "cordis.patch.yml",
+      "lib",
+      "package.json",
+      "presets"
+    ]
+  },
+  "dsh-web-frontend": {
+    "bytes": 5705760,
+    "entries": [
+      "LICENSE",
+      "dist",
+      "package.json"
+    ]
+  },
+  "dsh-http-proxy": {
+    "bytes": 49826,
+    "entries": [
+      "LICENSE",
+      "README.i18n.yaml",
+      "README.md",
+      "README.zh.md",
+      "lib",
+      "package.json"
+    ]
+  },
+  "dsh-client-ui-plugin-manager": {
+    "bytes": 246540,
+    "entries": [
+      "LICENSE",
+      "README.i18n.yaml",
+      "README.md",
+      "README.zh.md",
+      "lib",
+      "package.json"
+    ]
+  },
+  "dsh-client-ui-settings-plugins": {
+    "bytes": 21723,
+    "entries": [
+      "LICENSE",
+      "README.i18n.yaml",
+      "README.md",
+      "README.zh.md",
+      "lib",
+      "package.json"
+    ]
+  },
+  "dsh-headless": {
+    "bytes": 64788,
+    "entries": [
+      "LICENSE",
+      "README.i18n.yaml",
+      "README.md",
+      "README.zh.md",
+      "cordis.patch.yml",
+      "lib",
+      "package.json"
+    ]
+  },
+  "dsh-app-boot": {
+    "bytes": 283904,
+    "entries": [
+      "LICENSE",
+      "README.i18n.yaml",
+      "README.md",
+      "README.zh.md",
+      "lib",
+      "package.json"
+    ]
+  },
+  "dsh-base": {
+    "bytes": 49563,
+    "entries": [
+      "LICENSE",
+      "README.i18n.yaml",
+      "README.md",
+      "README.zh.md",
+      "cordis.patch.yml",
+      "lib",
+      "package.json"
+    ]
+  },
+  "dsh-scope": {
+    "bytes": 32907,
+    "entries": [
+      "LICENSE",
+      "README.i18n.yaml",
+      "README.md",
+      "README.zh.md",
+      "lib",
+      "package.json"
+    ]
+  },
+  "dsh-workflow-ptc": {
+    "bytes": 92000,
+    "entries": [
+      "LICENSE",
+      "README.i18n.yaml",
+      "README.md",
+      "README.zh.md",
+      "lib",
+      "package.json"
+    ]
+  }
+}

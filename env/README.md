@@ -7,7 +7,7 @@ Everything this project needs to run (locally, in AI Studio, and on Vercel) is l
 | --- | --- | --- |
 | `.env.local` | No — git-ignored via `.env*` | Your real local secrets (copy from `.env.example`) |
 | `.env.example` | Yes | Template with every supported variable |
-| `gapps-config.json` | Yes | Google Apps Script backend config — `webAppUrl` (the deployed /exec URL) + `appKey` |
+| `gapps-config.json` | Yes | Google Apps Script backend config — `webAppUrl` (the deployed /exec URL) |
 
 ## How they are loaded
 
@@ -18,9 +18,9 @@ Everything this project needs to run (locally, in AI Studio, and on Vercel) is l
 - Vercel: files here are **not deployed**; set the same variables in
   Project → Settings → Environment Variables.
 - Apps Script backend: `src/services/gappsAuth.ts` imports `env/gapps-config.json`
-  directly. `webAppUrl` is the deployed web-app `/exec` URL and `appKey` is the
-  `APP_KEY` script property — the client bundle ships both (like the old Firebase
-  config), so keep the deployment URL internal. See
+  directly. `webAppUrl` is the deployed web-app `/exec` URL. Sign-up and login
+  require no shared setup keys; saved jobs and exports require a signed-in
+  account session. Legacy `appKey` values and `VITE_GAPPS_APP_KEY` are ignored. See
   `instructions/apps-script-deployment.md` for the full deployment flow.
 
 ## Variable inventory
@@ -35,7 +35,7 @@ Everything this project needs to run (locally, in AI Studio, and on Vercel) is l
 | `PORT` | No | `server.ts` | Default `3000` |
 | `NODE_ENV` | No | `server.ts` | `production` serves the built `dist/` app; otherwise Vite middleware |
 | `DISABLE_HMR` | No | `vite.config.ts` | AI Studio sets `true` to disable file watching |
-| Apps Script backend config (in `gapps-config.json`) | Yes | `src/services/gappsAuth.ts` | `webAppUrl` + `appKey`; fill in after deploying the Apps Script web app (see `instructions/apps-script-deployment.md`). On Vercel, `VITE_GAPPS_WEB_APP_URL` / `VITE_GAPPS_APP_KEY` (see `env/.env.vercel`) override the JSON at build time. |
+| Apps Script backend config (in `gapps-config.json`) | Yes | `src/services/gappsAuth.ts` | `webAppUrl`; fill in after deploying the Apps Script web app (see `instructions/apps-script-deployment.md`). On Vercel, `VITE_GAPPS_WEB_APP_URL` overrides the JSON at build time. |
 
 ## Deploying env changes to Vercel (learned the hard way, 2026-09-29)
 

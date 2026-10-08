@@ -1,0 +1,16 @@
+[
+  "renderer\\assets/",
+  "renderer\\assets\\welcome-brand.svg",
+  "renderer\\assets\\window-material.css",
+  "renderer\\mandatory-update-frame.js",
+  "renderer\\mandatory-update.css",
+  "renderer\\mandatory-update.html",
+  "renderer\\mandatory-update.js",
+  "renderer\\policy-login-loading.html",
+  "renderer\\update-close.svg",
+  "renderer\\update-dialog.css",
+  "renderer\\update-dialog.html",
+  "renderer\\update-dialog.js",
+  "renderer\\welcome.css",
+  "renderer\\welcome.html"
+]

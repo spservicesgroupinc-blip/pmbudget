@@ -212,21 +212,22 @@ export const BuyoutBudgetSection: React.FC<BuyoutBudgetSectionProps> = ({
                 <Calculator className="w-4 h-4" />
               </span>
               <h3 className="text-[15px] font-semibold tracking-tight text-slate-900">
-                Subcontractor Buyout Strategy &amp; Gross Margin Modeling
+                Buyout targets
               </h3>
             </div>
             <p className="text-[12px] text-slate-500 mt-0.5">
-              Set target subcontractor buyout allowance percentage against approved insurance RCV to secure project margins.
+              Set the subcontractor allowance as a percentage of approved RCV.
             </p>
           </div>
 
           {/* Quick preset pills */}
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="text-[12px] text-slate-500 font-medium">Target Buyout:</span>
             {[50, 55, 60, 65].map((pct) => (
               <button
                 key={pct}
                 type="button"
+                aria-label={`${pct}% subcontractor buyout`}
                 onClick={() => setGlobalBuyoutPct(pct)}
                 className={`h-8 px-2.5 rounded-lg text-[12px] font-semibold transition-colors ${
                   globalBuyoutPct === pct
@@ -234,14 +235,14 @@ export const BuyoutBudgetSection: React.FC<BuyoutBudgetSectionProps> = ({
                     : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
                 }`}
               >
-                {pct}% Sub ({100 - pct}% GM)
+                {pct}%
               </button>
             ))}
           </div>
         </div>
 
         {/* Slider bar */}
-        <div className="mt-4 pt-4 border-t border-slate-100 flex items-center gap-4">
+        <div className="mt-4 pt-4 border-t border-slate-100 grid gap-3 sm:flex sm:items-center sm:gap-4">
           <input
             type="range"
             min="40"
@@ -249,9 +250,10 @@ export const BuyoutBudgetSection: React.FC<BuyoutBudgetSectionProps> = ({
             step="1"
             value={globalBuyoutPct}
             onChange={(e) => setGlobalBuyoutPct(Number(e.target.value))}
-            className="flex-1 accent-red-600 cursor-pointer"
+            aria-label="Target subcontractor buyout percentage"
+            className="w-full min-w-0 sm:flex-1 accent-red-600 cursor-pointer"
           />
-          <div className="flex items-center gap-1.5 px-3 py-1 rounded-lg border border-slate-200 bg-slate-50 text-[13px] font-semibold tabular-nums text-slate-900">
+          <div className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 text-[13px] font-semibold tabular-nums text-slate-900">
             <span>{globalBuyoutPct}%</span>
             <span className="text-[11px] font-normal text-slate-500">
               (Target Sub Cost)
@@ -260,7 +262,7 @@ export const BuyoutBudgetSection: React.FC<BuyoutBudgetSectionProps> = ({
           <button
             type="button"
             onClick={() => onApplyBuyoutToAll(globalBuyoutPct)}
-            className="shrink-0 h-8 px-3 rounded-lg bg-red-600 text-white text-[12px] font-semibold hover:bg-red-700 transition-colors whitespace-nowrap"
+            className="shrink-0 min-h-10 px-3 py-2 rounded-lg bg-red-600 text-white text-[12px] font-semibold hover:bg-red-700 transition-colors whitespace-nowrap"
           >
             Apply {globalBuyoutPct}% to all trades
           </button>

@@ -1,0 +1,9 @@
+[
+  "LICENSE",
+  "README.i18n.yaml",
+  "README.md",
+  "README.zh.md",
+  "lib",
+  "node_modules",
+  "package.json"
+]

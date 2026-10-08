@@ -88,12 +88,21 @@ function handleGappsMock(body: Record<string, unknown>): unknown {
     case 'addUser': {
       const email = String(body.email || '').trim().toLowerCase();
       const password = String(body.password || '');
-      const name = String(body.name || '').trim() || email;
-      if (!email || !password) {
-        return gappsMockFail('Email and password are required.');
+      const name = String(body.name || '').trim();
+      if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return gappsMockFail('Enter a valid email address.');
       }
-      GAPPS_MOCK_USERS[email] = { password, name, role: 'admin' };
-      return gappsMockOk({ user: { email, name, role: 'admin' } });
+      if (!name || name.length > 100) {
+        return gappsMockFail('Enter your name (up to 100 characters).');
+      }
+      if (password.length < 8 || password.length > 128) {
+        return gappsMockFail('Password must be between 8 and 128 characters.');
+      }
+      if (Object.prototype.hasOwnProperty.call(GAPPS_MOCK_USERS, email)) {
+        return gappsMockFail('An account with this email already exists. Please sign in.');
+      }
+      GAPPS_MOCK_USERS[email] = { password, name, role: 'staff' };
+      return gappsMockOk({ user: { email, name, role: 'staff' } });
     }
     case 'logout':
       return gappsMockOk({ ok: true });

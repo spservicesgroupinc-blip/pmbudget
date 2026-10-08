@@ -4,7 +4,6 @@ import {
   CheckCircle2,
   Eye,
   EyeOff,
-  KeyRound,
   Loader2,
   Lock,
   Mail,
@@ -25,7 +24,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onAuthenticated }) => {
   const [showPassword, setShowPassword] = useState(false);
   const [name, setName] = useState('');
   const [confirm, setConfirm] = useState('');
-  const [setupKey, setSetupKey] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
@@ -71,14 +69,12 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onAuthenticated }) => {
         email: email.trim(),
         name: name.trim(),
         password,
-        adminKey: setupKey.trim() || undefined,
       });
       setInfo(`Account created for ${email.trim()}. Sign in below.`);
       setMode('signin');
       setPassword('');
       setConfirm('');
       setName('');
-      setSetupKey('');
     } catch (err: any) {
       setError(err?.message || 'Account creation failed.');
     } finally {
@@ -91,19 +87,19 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onAuthenticated }) => {
       <div className="w-full max-w-md bg-white rounded-2xl border border-slate-200 shadow-sm px-8 py-10">
         {/* Brand */}
         <div className="flex justify-center mb-6">
-          <BrandLogo size={56} withWordmark />
+          <BrandLogo size={40} withWordmark sublabel="Project Manager Workspace" className="max-w-full [&>span]:min-w-0" />
         </div>
 
         <div className="text-center mb-6">
           <h1 className="text-[17px] font-semibold tracking-tight text-slate-900">
             {mode === 'signin'
-              ? 'Sign in to the Restoration Document Suite'
+              ? 'Sign in to the Project Manager Workspace'
               : 'Create Your Account'}
           </h1>
           <p className="text-[12px] text-slate-500 mt-1.5">
             {mode === 'signin'
               ? 'Accounts are managed in the Hays + Sons user sheet. Exports are written to the company Google Workspace automatically.'
-              : 'The first account is created right here. After the first user exists, account creation requires the office setup key.'}
+              : 'Enter your name, email, and password to create your account.'}
           </p>
         </div>
 
@@ -197,11 +193,12 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onAuthenticated }) => {
                 onClick={() => {
                   setMode('create');
                   setError(null);
+                  setInfo(null);
                 }}
                 className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-red-600 hover:text-red-700"
               >
                 <UserPlus className="w-3.5 h-3.5" />
-                Create the first account
+                Create an account
               </button>
             </div>
           </form>
@@ -217,6 +214,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onAuthenticated }) => {
               <input
                 id="gapps-name"
                 type="text"
+                maxLength={100}
                 autoComplete="name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
@@ -238,6 +236,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onAuthenticated }) => {
                 <input
                   id="gapps-create-email"
                   type="email"
+                  maxLength={254}
                   autoComplete="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -260,6 +259,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onAuthenticated }) => {
                 <input
                   id="gapps-create-password"
                   type={showPassword ? 'text' : 'password'}
+                  maxLength={128}
                   autoComplete="new-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
@@ -289,6 +289,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onAuthenticated }) => {
               <input
                 id="gapps-confirm"
                 type="password"
+                maxLength={128}
                 autoComplete="new-password"
                 value={confirm}
                 onChange={(e) => setConfirm(e.target.value)}
@@ -296,31 +297,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onAuthenticated }) => {
                 disabled={busy}
                 className="w-full h-11 px-3.5 rounded-lg border border-slate-300 bg-slate-50 text-[13px] text-slate-900 transition focus:bg-white focus:outline-none focus:border-red-500 focus:ring-2 focus:ring-red-500/15"
               />
-            </div>
-
-            <div>
-              <label
-                htmlFor="gapps-setup-key"
-                className="block text-[12px] font-medium text-slate-600 mb-1.5"
-              >
-                Setup Key <span className="font-normal text-slate-400">(optional)</span>
-              </label>
-              <div className="relative">
-                <KeyRound className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                <input
-                  id="gapps-setup-key"
-                  type="password"
-                  value={setupKey}
-                  onChange={(e) => setSetupKey(e.target.value)}
-                  placeholder="Only needed after the first account exists"
-                  disabled={busy}
-                  className="w-full h-11 pl-10 pr-3.5 rounded-lg border border-slate-300 bg-slate-50 text-[13px] text-slate-900 transition focus:bg-white focus:outline-none focus:border-red-500 focus:ring-2 focus:ring-red-500/15"
-                />
-              </div>
-              <p className="mt-1.5 text-[11px] text-slate-400">
-                The very first account can be created without a key. After that,
-                the office setup key is required.
-              </p>
             </div>
 
             <button
@@ -360,7 +336,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onAuthenticated }) => {
 
         <p className="text-[11px] text-slate-400 text-center mt-6">
           Credentials are validated against the office user sheet (Google
-          Sheets). Contact the office to request an account.
+          Sheets). Create an account above or sign in with your existing account.
         </p>
       </div>
     </div>

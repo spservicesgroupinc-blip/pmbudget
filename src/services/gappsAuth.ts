@@ -1,14 +1,12 @@
 import gappsConfig from '../../env/gapps-config.json';
 
 /**
- * Vercel overrides: when the build runs on Vercel, `VITE_GAPPS_WEB_APP_URL`
- * and `VITE_GAPPS_APP_KEY` (set in Project → Settings → Environment Variables,
- * see env/.env.vercel) override the values bundled from env/gapps-config.json.
- * Locally those vars are undefined, so the committed JSON config is used.
+ * VITE_GAPPS_WEB_APP_URL overrides the URL bundled from gapps-config.json.
+ * Authentication uses individual account sessions; shared setup/app keys
+ * are no longer required by the Apps Script backend.
  */
 const gapps = {
   webAppUrl: import.meta.env.VITE_GAPPS_WEB_APP_URL || gappsConfig.webAppUrl,
-  appKey: import.meta.env.VITE_GAPPS_APP_KEY || gappsConfig.appKey,
 };
 
 export interface GappsUser {
@@ -31,12 +29,10 @@ interface GappsEnvelope {
 
 const SESSION_KEY = 'hays.sons.gapps.session.v1';
 
-/** True once BOTH the deployed Apps Script URL and the app key are present. */
+/** True once the deployed Apps Script URL is present. */
 export const isGappsConfigured = (): boolean =>
   gapps.webAppUrl.length > 0 &&
-  !gapps.webAppUrl.includes('REPLACE_WITH') &&
-  gapps.appKey.length > 0 &&
-  !gapps.appKey.includes('REPLACE_WITH');
+  !gapps.webAppUrl.includes('REPLACE_WITH');
 
 const isLocalDev = (): boolean =>
   typeof window !== 'undefined' &&
@@ -95,7 +91,6 @@ export async function gappsFetch<T>(
   const session = readSession();
   const includeToken = action !== 'login' && action !== 'ping' && action !== 'addUser';
   const body: Record<string, unknown> = {
-    appKey: gapps.appKey,
     action,
     ...payload,
   };
@@ -219,21 +214,17 @@ export async function logout(): Promise<void> {
 }
 
 /**
- * Creates an account via the backend's addUser action. The Apps Script allows
- * this WITHOUT a setup key until the first user exists (first-run bootstrap);
- * afterwards the ADMIN_SETUP_KEY is required.
+ * Creates a new staff account through self-service sign-up.
  */
 export async function createAccount(input: {
   email: string;
   name: string;
   password: string;
-  adminKey?: string;
 }): Promise<GappsUser> {
   const data = await gappsFetch<{ user: GappsUser }>('addUser', {
     email: input.email,
     name: input.name,
     password: input.password,
-    adminKey: input.adminKey || '',
   });
   if (!data || !data.user || !data.user.email) {
     throw new Error('Workspace backend returned an invalid response.');

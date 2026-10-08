@@ -3,8 +3,8 @@
  * Hays + Sons Complete Restoration
  *
  * Deployed as a Web App ("Execute as: Me", "Who has access: Anyone").
- * Every POST is gated by an appKey check; session-based actions additionally
- * require a token issued by login(). Exports are written into the script
+ * Account creation and login require no setup keys. Data actions require
+ * a session token issued by login(). Exports are written into the script
  * owner's Google account and logged to the "Exports" sheet.
  *
  * After editing this file, create a NEW deployment version for changes to
@@ -13,8 +13,6 @@
 
 /* ===================== Configuration / constants ===================== */
 
-var PROP_APP_KEY = 'APP_KEY';
-var PROP_ADMIN_SETUP_KEY = 'ADMIN_SETUP_KEY';
 var PROP_SESSION_TTL_HOURS = 'SESSION_TTL_HOURS';
 var PROP_DB_SPREADSHEET_ID = 'DB_SPREADSHEET_ID';
 
@@ -42,7 +40,7 @@ var DRIVE_FILE_URL_PREFIX = 'https://drive.google.com/file/d/';
 
 /**
  * GET /exec — browsable health check. Returns the same payload as the
- * 'ping' action without requiring an appKey.
+ * 'ping' action without requiring a session.
  */
 function doGet() {
   return respond_({ ok: true, data: pingData_() });
@@ -50,7 +48,7 @@ function doGet() {
 
 /**
  * POST /exec — the main web app handler.
- * Body: { appKey: string, action: string, token?: string, ...payload }
+ * Body: { action: string, token?: string, ...payload }
  * Always responds HTTP 200 with { ok: true, data } or { ok: false, error }.
  */
 function doPost(e) {
@@ -67,15 +65,6 @@ function doPost(e) {
     }
     if (typeof body !== 'object' || body === null) {
       throw new Error('Invalid JSON body.');
-    }
-
-    // App-key gate. APP_KEY is a high-entropy value stored in script properties.
-    var expectedKey = PropertiesService.getScriptProperties().getProperty(PROP_APP_KEY);
-    if (!expectedKey) {
-      throw new Error('Backend is not configured: APP_KEY script property is missing.');
-    }
-    if (typeof body.appKey !== 'string' || body.appKey !== expectedKey) {
-      throw new Error('Invalid app key.');
     }
 
     return respond_({ ok: true, data: handleAction_(body) });
@@ -198,44 +187,38 @@ function session_(body) {
 }
 
 /**
- * addUser: { adminKey?, email, name, password, role? }
- * Creates or updates a user. FIRST-RUN BOOTSTRAP: while the Users sheet is
- * empty, account creation is open so the office can create the initial
- * account directly from the app's "Create Account" page. Once any user
- * exists, the ADMIN_SETUP_KEY script property gates this action.
+ * addUser: { email, name, password }
+ * Self-service sign-up creates a new staff account. Existing accounts and
+ * privileged roles can only be updated through the editor/admin workflow.
  */
 function addUser_(body) {
-  var adminKey = typeof body.adminKey === 'string' ? body.adminKey : '';
-  var expectedAdminKey = PropertiesService.getScriptProperties().getProperty(PROP_ADMIN_SETUP_KEY);
-  var firstRun = isUsersSheetEmpty_();
-  if (!firstRun && (!expectedAdminKey || adminKey !== expectedAdminKey)) {
-    throw new Error('Invalid setup key.');
-  }
   var email = normalizeEmail_(body.email);
-  var name = typeof body.name === 'string' && body.name.trim() ? body.name.trim() : email;
+  var name = typeof body.name === 'string' ? body.name.trim() : '';
   var password = typeof body.password === 'string' ? body.password : '';
-  var role = typeof body.role === 'string' && body.role.trim() ? body.role.trim() : (firstRun ? 'admin' : 'staff');
-  if (!email || !password) {
-    throw new Error('Email and password are required.');
+  if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new Error('Enter a valid email address.');
   }
-  upsertUser_(email, name, password, role, true);
-  return { user: { email: email, name: name, role: role } };
-}
+  if (!name || name.length > 100) {
+    throw new Error('Enter your name (up to 100 characters).');
+  }
+  if (password.length < 8 || password.length > 128) {
+    throw new Error('Password must be between 8 and 128 characters.');
+  }
 
-/** True when the Users sheet has no data rows yet (first-run bootstrap). */
-function isUsersSheetEmpty_() {
-  var users = ensureSheet_(SHEET_USERS, USERS_HEADERS);
-  var lastRow = users.getLastRow();
-  if (lastRow <= 1) {
-    return true;
-  }
-  var values = users.getRange(2, 1, lastRow - 1, 1).getValues();
-  for (var i = 0; i < values.length; i++) {
-    if (String(values[i][0]).trim() !== '') {
-      return false;
+  // Serialize duplicate checks and inserts so simultaneous registrations
+  // cannot overwrite one another through the editor's upsert helper.
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    if (findUserRow_(email)) {
+      throw new Error('An account with this email already exists. Please sign in.');
     }
+    upsertUser_(email, name, password, 'staff', true);
+    SpreadsheetApp.flush();
+    return { user: { email: email, name: name, role: 'staff' } };
+  } finally {
+    lock.releaseLock();
   }
-  return true;
 }
 
 /* ============================== Export actions ============================== */
@@ -804,7 +787,7 @@ function setup() {
 }
 
 /**
- * Editor-runnable: bootstraps the first user without the adminKey gate.
+ * Editor-only: creates an administrator or updates an existing account.
  * Example: createAdminUser('you@hayssons.com', 'Your Name', 'a-strong-password')
  */
 function createAdminUser(email, name, password, role) {

@@ -1,7 +1,6 @@
-import React, { lazy, Suspense, useState, useEffect } from 'react';
+import React, { lazy, Suspense, useState, useEffect, useCallback } from 'react';
 import { Header } from './components/Header';
-import { SideMenu } from './components/SideMenu';
-import { QuickAdd } from './components/QuickAdd';
+import { SideMenu, PROJECT_NAV_ITEMS } from './components/SideMenu';
 import { EntryCard } from './components/EntryCard';
 import { IntakeSection } from './components/sections/IntakeSection';
 import { Toast, ToastMessage } from './components/Toast';
@@ -74,7 +73,12 @@ const SectionFallback = () => (
 );
 
 export default function App() {
-  const [activeSection, setActiveSection] = useState<string>('intake');
+  const [activeSection, setActiveSectionState] = useState<string>('intake');
+  const setActiveSection = useCallback((section: string) => {
+    setActiveSectionState(section);
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  }, []);
+  const currentSection = PROJECT_NAV_ITEMS.find((section) => section.id === activeSection)!;
   const [currentEstimate, setCurrentEstimate] = useState<EstimateResult | null>(
     SAMPLE_ESTIMATES.water_damage
   );
@@ -521,8 +525,8 @@ export default function App() {
       />
 
       {/* Main Workspace Layout */}
-      <main className="flex-1 max-w-[1400px] w-full mx-auto px-5 py-6">
-        <div className="flex flex-col lg:flex-row gap-6">
+      <main className="flex-1 max-w-[1400px] w-full min-w-0 mx-auto px-3 py-4 sm:px-5 sm:py-6">
+        <div className="flex min-w-0 flex-col lg:flex-row gap-4 lg:gap-6">
           {/* Side Menu */}
           <SideMenu
             activeSection={activeSection}
@@ -535,15 +539,22 @@ export default function App() {
 
           {/* Content Column */}
           <div className="flex-1 min-w-0 space-y-6">
-            {/* Pinned Workflow Entry Card */}
-            <EntryCard
-              onProcessPdf={handleProcessPdf}
-              onProcessText={handleProcessText}
-              onLoadSample={handleLoadSample}
-              isProcessing={isProcessing}
-              currentEstimate={currentEstimate}
-              errorMessage={errorMessage}
-            />
+            <div className="border-b border-slate-200 pb-4">
+              <h1 className="text-2xl font-semibold tracking-tight text-slate-900">{currentSection.label}</h1>
+              <p className="mt-1 text-sm leading-6 text-slate-500">{currentSection.description}</p>
+            </div>
+
+            {/* Keep draft upload inputs mounted when another section is open. */}
+            <div hidden={activeSection !== 'intake'}>
+              <EntryCard
+                onProcessPdf={handleProcessPdf}
+                onProcessText={handleProcessText}
+                onLoadSample={handleLoadSample}
+                isProcessing={isProcessing}
+                currentEstimate={currentEstimate}
+                errorMessage={errorMessage}
+              />
+            </div>
 
             {/* Active Section Only */}
             {activeSection === 'intake' && (
@@ -635,24 +646,13 @@ export default function App() {
       <footer className="border-t border-slate-200 mt-auto bg-white py-4">
         <div className="max-w-[1400px] mx-auto px-5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-[12px] text-slate-500">
           <div>
-            <span className="font-semibold text-slate-700">XactSchedule</span> &bull; Reconstruction Subcontractor Buyout &amp; Gantt Engine &bull; Operational Workspace Standard
+            <span className="font-semibold text-slate-700">Hays+Sons</span> &bull; Project Manager Workspace
           </div>
           <div className="flex items-center gap-4 text-slate-400">
-            <span>Model: DeepSeek Chat</span>
-            <span>&bull;</span>
-            <span>Google Workspace Enabled</span>
-            <span>&bull;</span>
-            <span className="tabular-nums">v1.3.0</span>
+            <span>Estimate &middot; Plan &middot; Deliver</span>
           </div>
         </div>
       </footer>
-
-      {/* Floating Quick Add */}
-      <QuickAdd
-        hasEstimate={!!currentEstimate}
-        onAddTrade={handleAddTrade}
-        onNavigateSection={setActiveSection}
-      />
 
       {/* Floating Toast */}
       <Toast toast={toast} onDismiss={() => setToast(null)} />

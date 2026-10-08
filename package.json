@@ -13,6 +13,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
+    "verify:auth": "node scripts/verify-apps-script-auth.mjs",
     "verify:budget": "tsx scripts/verify-budget-engine.ts",
     "verify:workorders": "tsx scripts/verify-work-order-pdf.ts",
     "verify:selections": "tsx scripts/verify-customer-selections.ts",

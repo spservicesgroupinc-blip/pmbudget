@@ -1,25 +1,38 @@
-import React from 'react';
+import React, { useRef, useState } from 'react';
 import {
-  FileText,
-  Boxes,
-  DollarSign,
-  GanttChartSquare,
-  Share2,
-  Code2,
-  ClipboardList,
-  Palette,
-  Plus,
-  Users,
-  UploadCloud,
+  Boxes, ChevronDown, ClipboardList, Code2, DollarSign, FolderOpen,
+  GanttChartSquare, Menu, Palette, Plus, Share2, UploadCloud, X,
 } from 'lucide-react';
-import { EstimateResult } from '../types/estimate';
+import type { EstimateResult } from '../types/estimate';
 
 export interface NavItem {
   id: string;
   label: string;
+  description: string;
   icon: React.ElementType;
-  badge?: string | number;
 }
+
+export const PROJECT_NAV_GROUPS: { label: string; items: NavItem[] }[] = [
+  { label: 'Project', items: [
+    { id: 'customers', label: 'Saved jobs', description: 'Find a saved job and pick up where you left off.', icon: FolderOpen },
+    { id: 'intake', label: 'Estimate intake', description: 'Upload an estimate and review the job information.', icon: UploadCloud },
+  ] },
+  { label: 'Plan & budget', items: [
+    { id: 'buyout', label: 'Budget', description: 'Review trade allowances, compare bids, and plan your buyout.', icon: DollarSign },
+    { id: 'packages', label: 'Trade packages', description: 'Organize the scope of work for each trade.', icon: Boxes },
+    { id: 'gantt', label: 'Schedule', description: 'Sequence the work and adjust the project timeline.', icon: GanttChartSquare },
+  ] },
+  { label: 'Documents & sharing', items: [
+    { id: 'workorders', label: 'Work orders', description: 'Prepare subcontractor agreements and field instructions.', icon: ClipboardList },
+    { id: 'selections', label: 'Customer selections', description: 'Review finishes, material allowances, and customer choices.', icon: Palette },
+    { id: 'workspace', label: 'Exports', description: 'Share budgets, scopes, schedules, and documents with the office.', icon: Share2 },
+  ] },
+  { label: 'Advanced', items: [
+    { id: 'json', label: 'JSON data', description: 'Review and export the underlying estimate data.', icon: Code2 },
+  ] },
+];
+
+export const PROJECT_NAV_ITEMS = PROJECT_NAV_GROUPS.flatMap((group) => group.items);
 
 interface SideMenuProps {
   activeSection: string;
@@ -30,279 +43,95 @@ interface SideMenuProps {
   hasUnsavedChanges?: boolean;
 }
 
-interface NavGroup {
-  label: string;
-  items: NavItem[];
-}
-
 export const SideMenu: React.FC<SideMenuProps> = ({
-  activeSection,
-  onSelectSection,
-  onAddTrade,
-  currentEstimate,
-  isProcessing,
-  hasUnsavedChanges,
+  activeSection, onSelectSection, onAddTrade, currentEstimate, isProcessing, hasUnsavedChanges,
 }) => {
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const mobileToggle = useRef<HTMLButtonElement>(null);
   const meta = currentEstimate?.project_meta;
-  const tradeCount = currentEstimate?.trade_sections.length || 0;
-  const selectionCount = currentEstimate?.customer_selections?.length || 0;
+  const activeItem = PROJECT_NAV_ITEMS.find((item) => item.id === activeSection);
 
-  const groups: NavGroup[] = [
-    {
-      label: 'Build Workflow',
-      items: [
-        {
-          id: 'intake',
-          label: 'Intake & Metadata',
-          icon: FileText,
-          badge: meta ? '✓' : undefined,
-        },
-        {
-          id: 'packages',
-          label: 'Trade Packages',
-          icon: Boxes,
-          badge: tradeCount > 0 ? tradeCount : undefined,
-        },
-        {
-          id: 'buyout',
-          label: 'Buyout Budget',
-          icon: DollarSign,
-          badge: meta ? '$' : undefined,
-        },
-        {
-          id: 'gantt',
-          label: 'Gantt Schedule',
-          icon: GanttChartSquare,
-          badge: tradeCount > 0 ? `${tradeCount}T` : undefined,
-        },
-      ],
-    },
-    {
-      label: 'Records',
-      items: [
-        {
-          id: 'customers',
-          label: 'Customer Profiles',
-          icon: Users,
-        },
-      ],
-    },
-    {
-      label: 'Deliver',
-      items: [
-        {
-          id: 'workorders',
-          label: 'Field Work Orders',
-          icon: ClipboardList,
-          badge: tradeCount > 0 ? 'WO' : undefined,
-        },
-        {
-          id: 'selections',
-          label: 'Customer Selections',
-          icon: Palette,
-          badge: selectionCount > 0 ? selectionCount : undefined,
-        },
-        {
-          id: 'workspace',
-          label: 'Workspace Sync',
-          icon: Share2,
-          badge: 'G-Suite',
-        },
-        {
-          id: 'json',
-          label: 'JSON & Schema',
-          icon: Code2,
-        },
-      ],
-    },
-  ];
+  const navigate = (id: string) => {
+    setMobileOpen(false);
+    onSelectSection(id);
+    mobileToggle.current?.focus({ preventScroll: true });
+  };
+
+  const renderGroups = () => PROJECT_NAV_GROUPS.map((group) => (
+    <section key={group.label} className="min-w-0">
+      <h2 className="mb-1.5 px-3 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+        {group.label}
+      </h2>
+      <div className="space-y-1">
+        {group.items.map((item) => {
+          const Icon = item.icon;
+          const active = item.id === activeSection;
+          const count = item.id === 'packages' ? currentEstimate?.trade_sections.length
+            : item.id === 'selections' ? currentEstimate?.customer_selections?.length : undefined;
+          return (
+            <button
+              key={item.id} type="button" onClick={() => navigate(item.id)}
+              aria-current={active ? 'page' : undefined}
+              className={`flex min-h-11 w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-inset ${
+                active ? 'border-red-200 bg-red-50 text-red-700'
+                  : 'border-transparent text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+              }`}
+            >
+              <Icon className={`h-[18px] w-[18px] shrink-0 ${active ? 'text-red-600' : 'text-slate-400'}`} aria-hidden />
+              <span className="min-w-0 flex-1 leading-5">{item.label}</span>
+              {!!count && <span className={`rounded px-1.5 py-0.5 text-[11px] tabular-nums ${active ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-500'}`}>{count}</span>}
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  ));
+
+  const addTradeButton = (
+    <button type="button" disabled={!meta} onClick={() => {
+      setMobileOpen(false);
+      onAddTrade();
+      mobileToggle.current?.focus({ preventScroll: true });
+    }} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 disabled:cursor-not-allowed disabled:opacity-40">
+      <Plus className="h-4 w-4" aria-hidden /> New trade package
+    </button>
+  );
 
   return (
     <>
-      {/* Mobile Horizontal Pill Strip (<1024px) */}
-      <div className="lg:hidden w-full overflow-x-auto no-scrollbar pb-2 border-b border-slate-200 sticky top-16 z-20 bg-slate-50/95 backdrop-blur">
-        <div className="flex items-center gap-1.5 min-w-max py-1">
-          {groups.flatMap((g) => g.items).map((item) => {
-            const Icon = item.icon;
-            const isActive = activeSection === item.id;
-            return (
-              <button
-                key={item.id}
-                onClick={() => onSelectSection(item.id)}
-                aria-current={isActive ? 'page' : undefined}
-                className={`inline-flex items-center gap-2 px-3 h-9 rounded-lg text-[13px] font-medium border transition-colors shrink-0 ${
-                  isActive
-                    ? 'bg-red-600 border-red-600 text-white shadow-sm shadow-red-600/25'
-                    : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-                }`}
-              >
-                <Icon
-                  className={`w-4 h-4 ${isActive ? 'text-white' : 'text-slate-400'}`}
-                />
-                <span>{item.label}</span>
-                {item.badge !== undefined && (
-                  <span
-                    className={`ml-1 px-1.5 h-[18px] rounded-full text-[11px] font-bold flex items-center justify-center tabular-nums ${
-                      isActive
-                        ? 'bg-white/20 text-white'
-                        : 'bg-slate-100 text-slate-600'
-                    }`}
-                  >
-                    {item.badge}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
+      <div className="min-w-0 lg:hidden" onKeyDown={(event) => {
+        if (event.key === 'Escape' && mobileOpen) {
+          setMobileOpen(false);
+          mobileToggle.current?.focus();
+        }
+      }}>
+        <button ref={mobileToggle} type="button" onClick={() => setMobileOpen((open) => !open)}
+          aria-expanded={mobileOpen} aria-controls="pm-mobile-navigation" aria-label="Project menu"
+          className="flex min-h-14 w-full items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500">
+          {mobileOpen ? <X className="h-5 w-5 shrink-0 text-slate-500" aria-hidden /> : <Menu className="h-5 w-5 shrink-0 text-slate-500" aria-hidden />}
+          <span className="min-w-0 flex-1"><span className="block text-[11px] font-medium text-slate-500">Project menu</span><span className="block text-sm font-semibold text-slate-900">{activeItem?.label || 'Choose a section'}</span></span>
+          <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${mobileOpen ? 'rotate-180' : ''}`} aria-hidden />
+        </button>
+        {mobileOpen && (
+          <div id="pm-mobile-navigation" className="mt-2 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+            <nav aria-label="Mobile project navigation" className="grid gap-5 sm:grid-cols-2">{renderGroups()}</nav>
+            <div className="mt-4 border-t border-slate-100 pt-3">{addTradeButton}</div>
+          </div>
+        )}
       </div>
 
-      {/* Desktop Side Menu (>= 1024px) */}
-      <aside className="hidden lg:flex w-64 shrink-0 flex-col gap-4 self-start sticky top-[4.5rem]">
-        {/* Navigation */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-          {groups.map((group, gi) => (
-            <div key={group.label} className={gi > 0 ? 'pt-1' : ''}>
-              <div className="px-4 pt-4 pb-1.5">
-                <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">
-                  {group.label}
-                </span>
-              </div>
-              <nav className="p-2 space-y-0.5" aria-label={group.label}>
-                {group.items.map((item) => {
-                  const Icon = item.icon;
-                  const isActive = activeSection === item.id;
-                  return (
-                    <button
-                      key={item.id}
-                      onClick={() => onSelectSection(item.id)}
-                      aria-current={isActive ? 'page' : undefined}
-                      className={`relative flex w-full items-center gap-2.5 px-2.5 h-10 rounded-xl text-[13px] font-medium transition-all ${
-                        isActive
-                          ? 'bg-gradient-to-r from-red-600 to-rose-500 text-white shadow-md shadow-red-500/25'
-                          : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-                      }`}
-                    >
-                      <Icon
-                        className={`w-[18px] h-[18px] shrink-0 ${
-                          isActive ? 'text-white' : 'text-slate-400'
-                        }`}
-                      />
-                      <span className="truncate">{item.label}</span>
-                      {item.badge !== undefined && (
-                        <span
-                          className={`ml-auto min-w-[20px] h-[20px] px-1.5 rounded-full text-[11px] font-bold flex items-center justify-center tabular-nums ${
-                            isActive
-                              ? 'bg-white/20 text-white'
-                              : 'bg-slate-100 text-slate-500'
-                          }`}
-                        >
-                          {item.badge}
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
-              </nav>
-            </div>
-          ))}
-          <div className="p-2 border-t border-slate-100">
-            <button
-              onClick={onAddTrade}
-              disabled={!meta}
-              className={`flex w-full items-center justify-center gap-2 h-10 rounded-xl text-[13px] font-semibold transition-all ${
-                meta
-                  ? 'bg-slate-900 text-white hover:bg-slate-800 active:scale-[0.99] shadow-sm'
-                  : 'bg-slate-100 text-slate-400 cursor-not-allowed'
-              }`}
-            >
-              <Plus className="w-4 h-4" />
-              <span>New Trade Package</span>
-            </button>
-            <button
-              onClick={() => onSelectSection('intake')}
-              className="mt-1 flex w-full items-center justify-center gap-2 h-10 rounded-xl text-[13px] font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors"
-            >
-              <UploadCloud className="w-4 h-4 text-slate-400" />
-              <span>Upload Estimate</span>
-            </button>
+      <aside className="hidden w-60 shrink-0 self-start lg:flex lg:sticky lg:top-24 lg:max-h-[calc(100dvh-7rem)] lg:flex-col" aria-label="Project sidebar">
+        <div className="shrink-0 rounded-t-xl border border-b-0 border-slate-200 bg-white px-4 py-4">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Current job</p>
+            {hasUnsavedChanges && <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">Modified</span>}
           </div>
+          <p className="truncate text-sm font-semibold text-slate-900">{isProcessing ? 'Analyzing estimate…' : meta?.client_name || 'No job selected'}</p>
+          <p className="mt-1 truncate text-xs text-slate-500">{meta ? `Claim ${meta.claim_number}` : 'Open a saved job or upload an estimate'}</p>
         </div>
-
-        {/* Current Record Card */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm px-4 py-3.5">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">
-              Current Record
-            </span>
-            {hasUnsavedChanges && (
-              <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-1.5 py-0.5">
-                Modified
-              </span>
-            )}
-          </div>
-
-          <div className="mt-2.5 space-y-1.5">
-            <div className="flex items-center gap-2">
-              <span
-                className={`relative flex w-2 h-2 shrink-0 ${
-                  isProcessing
-                    ? 'text-amber-500'
-                    : meta
-                    ? 'text-emerald-500'
-                    : 'text-slate-300'
-                }`}
-              >
-                <span className="w-2 h-2 rounded-full bg-current" />
-                {isProcessing && (
-                  <span className="absolute inset-0 rounded-full bg-current animate-ping opacity-75" />
-                )}
-              </span>
-              <span className="text-[13px] font-semibold text-slate-900 truncate">
-                {isProcessing
-                  ? 'Analyzing Estimate…'
-                  : meta
-                  ? meta.client_name
-                  : 'Empty Session'}
-              </span>
-            </div>
-
-            {meta ? (
-              <>
-                <p className="text-[11px] text-slate-500 font-mono tabular-nums truncate pl-4">
-                  {meta.carrier} · #{meta.claim_number}
-                </p>
-                <div className="pt-2 mt-2 border-t border-slate-100 flex items-center justify-between text-[12px] pl-4">
-                  <span className="text-slate-500">Total RCV:</span>
-                  <span className="font-semibold text-slate-900 tabular-nums">
-                    ${meta.total_rcv.toLocaleString(undefined, {
-                      minimumFractionDigits: 2,
-                      maximumFractionDigits: 2,
-                    })}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between text-[11px] pl-4 text-slate-500">
-                  <span>Packages:</span>
-                  <span className="font-semibold text-slate-800 tabular-nums">
-                    {tradeCount} Trade Packages
-                  </span>
-                </div>
-              </>
-            ) : (
-              <p className="text-[11px] text-slate-400 pl-4 leading-relaxed">
-                No active Xactimate claim. Upload a PDF or load sample data.
-              </p>
-            )}
-          </div>
-        </div>
-
-        {/* Quick Help Tip */}
-        <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-3.5 text-[11px] text-slate-500 space-y-1">
-          <p className="font-semibold text-slate-700">Project Manager Guide</p>
-          <p className="leading-relaxed">
-            Grand total RCV is reconciled against rolled-up trade buyout packages.
-            Sequencing is computed using Finish-to-Start (FS) logic.
-          </p>
+        <div className="min-h-0 overflow-y-auto rounded-b-xl border border-slate-200 bg-white p-2.5">
+          <nav aria-label="Project navigation" className="space-y-5 py-2">{renderGroups()}</nav>
+          <div className="mt-3 border-t border-slate-100 pt-3">{addTradeButton}</div>
         </div>
       </aside>
     </>

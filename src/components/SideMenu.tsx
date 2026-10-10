@@ -1,7 +1,7 @@
 import React, { useRef, useState } from 'react';
 import {
   Boxes, ChevronDown, ClipboardList, Code2, DollarSign, FolderOpen,
-  GanttChartSquare, Menu, Palette, Plus, Share2, UploadCloud, X,
+  GanttChartSquare, LayoutDashboard, Menu, Palette, Plus, Share2, UploadCloud, X,
 } from 'lucide-react';
 import type { EstimateResult } from '../types/estimate';
 
@@ -13,8 +13,9 @@ export interface NavItem {
 }
 
 export const PROJECT_NAV_GROUPS: { label: string; items: NavItem[] }[] = [
-  { label: 'Project', items: [
-    { id: 'customers', label: 'Saved jobs', description: 'Find a saved job and pick up where you left off.', icon: FolderOpen },
+  { label: 'Workspace', items: [
+    { id: 'home', label: 'Home', description: 'See your jobs and continue your work.', icon: LayoutDashboard },
+    { id: 'customers', label: 'Manage jobs', description: 'Open, save, or remove jobs from your workspace.', icon: FolderOpen },
     { id: 'intake', label: 'Estimate intake', description: 'Upload an estimate and review the job information.', icon: UploadCloud },
   ] },
   { label: 'Plan & budget', items: [
@@ -66,13 +67,16 @@ export const SideMenu: React.FC<SideMenuProps> = ({
         {group.items.map((item) => {
           const Icon = item.icon;
           const active = item.id === activeSection;
+          const disabled = isProcessing || (!meta && !['home', 'customers', 'intake'].includes(item.id));
           const count = item.id === 'packages' ? currentEstimate?.trade_sections.length
             : item.id === 'selections' ? currentEstimate?.customer_selections?.length : undefined;
           return (
             <button
               key={item.id} type="button" onClick={() => navigate(item.id)}
+              disabled={disabled}
+              title={disabled ? (isProcessing ? 'Wait for processing to finish' : 'Open a job to use this section') : undefined}
               aria-current={active ? 'page' : undefined}
-              className={`flex min-h-11 w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-inset ${
+              className={`flex min-h-11 w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left text-[14px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-inset ${
                 active ? 'border-red-200 bg-red-50 text-red-700'
                   : 'border-transparent text-slate-600 hover:bg-slate-50 hover:text-slate-900'
               }`}
@@ -88,7 +92,7 @@ export const SideMenu: React.FC<SideMenuProps> = ({
   ));
 
   const addTradeButton = (
-    <button type="button" disabled={!meta} onClick={() => {
+    <button type="button" disabled={!meta || isProcessing} onClick={() => {
       setMobileOpen(false);
       onAddTrade();
       mobileToggle.current?.focus({ preventScroll: true });

@@ -1,4 +1,4 @@
-import React, { lazy, Suspense, useState, useEffect, useCallback } from 'react';
+import React, { lazy, Suspense, useState, useEffect, useCallback, useRef } from 'react';
 import { Header } from './components/Header';
 import { SideMenu, PROJECT_NAV_ITEMS } from './components/SideMenu';
 import { EntryCard } from './components/EntryCard';
@@ -17,6 +17,7 @@ import { generateFinalWorkOrders, isBudgetAdjusted } from './services/workOrderG
 import { getCurrentUser, logout, verifySession, GappsUser } from './services/gappsAuth';
 import { saveCustomerProfile, CustomerProfileSummary } from './services/gappsApi';
 import { LoginPage } from './components/LoginPage';
+import { HomeSection } from './components/sections/HomeSection';
 
 // Keep in sync with the EntryCard upload guard. Vercel serverless request bodies cap at ~4.5MB; base64 inflates by ~4/3.
 const MAX_SERVERLESS_PDF_BYTES = 3.2 * 1024 * 1024;
@@ -73,15 +74,19 @@ const SectionFallback = () => (
 );
 
 export default function App() {
-  const [activeSection, setActiveSectionState] = useState<string>('intake');
+  const [activeSection, setActiveSectionState] = useState<string>('home');
   const setActiveSection = useCallback((section: string) => {
     setActiveSectionState(section);
     window.scrollTo({ top: 0, behavior: 'instant' });
   }, []);
   const currentSection = PROJECT_NAV_ITEMS.find((section) => section.id === activeSection)!;
-  const [currentEstimate, setCurrentEstimate] = useState<EstimateResult | null>(
-    SAMPLE_ESTIMATES.water_damage
-  );
+  const [currentEstimate, setCurrentEstimate] = useState<EstimateResult | null>(null);
+  const estimateRef = useRef(currentEstimate);
+  estimateRef.current = currentEstimate;
+  const [isSaving, setIsSaving] = useState(false);
+  const saveInFlight = useRef(false);
+  const [jobsRefreshVersion, setJobsRefreshVersion] = useState(0);
+  const [intakeSession, setIntakeSession] = useState(0);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [toast, setToast] = useState<ToastMessage | null>(null);
@@ -127,6 +132,46 @@ export default function App() {
     });
   };
 
+  useEffect(() => {
+    if (!hasUnsavedChanges) return;
+    const warnBeforeLeaving = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+    window.addEventListener('beforeunload', warnBeforeLeaving);
+    return () => window.removeEventListener('beforeunload', warnBeforeLeaving);
+  }, [hasUnsavedChanges]);
+
+  const withUnsavedGuard = (action: () => void) => {
+    if (isProcessing || saveInFlight.current) return;
+    if (!hasUnsavedChanges) { action(); return; }
+    setConfirmModal({
+      isOpen: true,
+      title: 'Discard unsaved changes?',
+      message: `Changes to ${currentEstimate?.project_meta.client_name || 'the current job'} have not been saved. Cancel and use Save changes to keep them.`,
+      confirmLabel: 'Discard changes',
+      isDestructive: true,
+      onConfirm: () => {
+        setConfirmModal((prev) => ({ ...prev, isOpen: false }));
+        action();
+      },
+    });
+  };
+
+  const persistEstimate = async (estimate: EstimateResult) => {
+    if (saveInFlight.current) return;
+    saveInFlight.current = true;
+    setIsSaving(true);
+    try {
+      await saveCustomerProfile(estimate);
+      setJobsRefreshVersion((version) => version + 1);
+      if (estimateRef.current === estimate) setHasUnsavedChanges(false);
+      showToast('success', `Saved job — ${estimate.project_meta.client_name}.`);
+    } catch (err) {
+      showToast('error', err instanceof Error ? err.message : 'Could not save this job. Please try again.');
+    } finally {
+      saveInFlight.current = false;
+      setIsSaving(false);
+    }
+  };
+
   const handleSignOut = async () => {
     try {
       await logout();
@@ -134,26 +179,20 @@ export default function App() {
       console.error(err);
     }
     setCurrentUser(null);
+    setCurrentEstimate(null);
+    setHasUnsavedChanges(false);
+    setActiveSection('home');
+    setIntakeSession((session) => session + 1);
     showToast('success', 'Signed out');
   };
 
   const handleReset = () => {
-    setConfirmModal({
-      isOpen: true,
-      title: 'Reset Current Estimate Session?',
-      subtitle: 'Clear loaded claim and trade packages',
-      message:
-        'This will clear the active Xactimate claim data, custom subcontractor bids, and schedule timeline.',
-      consequence: 'Any unsaved changes to trade packages or custom bids will be cleared.',
-      confirmLabel: 'Reset Session',
-      isDestructive: true,
-      onConfirm: () => {
+    withUnsavedGuard(() => {
         setCurrentEstimate(null);
         setHasUnsavedChanges(false);
         setErrorMessage(null);
-        setConfirmModal((prev) => ({ ...prev, isOpen: false }));
-        showToast('warning', 'Estimate session cleared');
-      },
+        setIntakeSession((session) => session + 1);
+        setActiveSection('intake');
     });
   };
 
@@ -222,7 +261,7 @@ export default function App() {
       }
 
       setCurrentEstimate(data);
-      setHasUnsavedChanges(false);
+      setHasUnsavedChanges(true);
       autoSaveCustomerProfile(data);
       const warns = data.processing?.warnings || [];
       const selCount = data.customer_selections?.length || 0;
@@ -270,7 +309,7 @@ export default function App() {
       data.extracted_at = new Date().toISOString();
 
       setCurrentEstimate(data);
-      setHasUnsavedChanges(false);
+      setHasUnsavedChanges(true);
       autoSaveCustomerProfile(data);
       const warns = data.processing?.warnings || [];
       showToast(
@@ -293,10 +332,13 @@ export default function App() {
   const handleLoadSample = (sampleKey: string) => {
     const sample = SAMPLE_ESTIMATES[sampleKey];
     if (sample) {
-      setCurrentEstimate(JSON.parse(JSON.stringify(sample)));
-      setHasUnsavedChanges(false);
+      const practiceEstimate: EstimateResult = JSON.parse(JSON.stringify(sample));
+      practiceEstimate.is_sample = true;
+      practiceEstimate.project_meta.client_name = `${sample.project_meta.client_name} (Sample)`;
+      setCurrentEstimate(practiceEstimate);
+      setHasUnsavedChanges(true);
       setErrorMessage(null);
-      showToast('success', `Loaded claim: ${sample.project_meta.client_name} — adjust the buyout budget to unlock final work orders.`);
+      showToast('warning', `Loaded sample job: ${sample.project_meta.client_name}. Sample data is for practice.`);
       setActiveSection('buyout');
     }
   };
@@ -474,31 +516,19 @@ export default function App() {
     estimate: EstimateResult,
     profile: CustomerProfileSummary
   ) => {
-    setCurrentEstimate(estimate);
-    setHasUnsavedChanges(false);
-    setErrorMessage(null);
-    showToast(
-      'success',
-      `Opened customer profile — ${profile.client_name} (Claim ${profile.claim_number}).`
-    );
-    setActiveSection('intake');
+    withUnsavedGuard(() => {
+      setCurrentEstimate(estimate);
+      setHasUnsavedChanges(false);
+      setErrorMessage(null);
+      setIntakeSession((session) => session + 1);
+      showToast('success', `Opened job — ${profile.client_name}.`);
+      setActiveSection('buyout');
+    });
   };
 
   // Fire-and-forget customer profile save after a fresh extraction.
   const autoSaveCustomerProfile = (estimate: EstimateResult) => {
-    void saveCustomerProfile(estimate)
-      .then((profile) =>
-        showToast(
-          'success',
-          `Customer profile saved — ${profile.client_name} (Claim ${profile.claim_number}).`
-        )
-      )
-      .catch((err: any) =>
-        showToast(
-          'warning',
-          `Customer profile auto-save failed: ${err?.message || 'unknown error'}`
-        )
-      );
+    void persistEstimate(estimate);
   };
 
   // Sheets-based login gates the entire app (see instructions/apps-script-deployment.md).
@@ -519,8 +549,12 @@ export default function App() {
       <Header
         currentEstimate={currentEstimate}
         currentUser={currentUser}
-        onSignOut={handleSignOut}
-        onReset={handleReset}
+        onSignOut={() => withUnsavedGuard(() => { void handleSignOut(); })}
+        onNewJob={handleReset}
+        onSave={() => currentEstimate && void persistEstimate(currentEstimate)}
+        hasUnsavedChanges={hasUnsavedChanges}
+        isSaving={isSaving}
+        isBusy={isProcessing}
         onNavigateSection={setActiveSection}
       />
 
@@ -539,17 +573,28 @@ export default function App() {
 
           {/* Content Column */}
           <div className="flex-1 min-w-0 space-y-6">
-            <div className="border-b border-slate-200 pb-4">
+            {currentEstimate?.is_sample && <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800"><strong>Sample job.</strong> This is practice data, not a live customer estimate.</div>}
+            {activeSection !== 'home' && <div className="border-b border-slate-200 pb-4">
               <h1 className="text-2xl font-semibold tracking-tight text-slate-900">{currentSection.label}</h1>
               <p className="mt-1 text-sm leading-6 text-slate-500">{currentSection.description}</p>
-            </div>
+            </div>}
+
+            {activeSection === 'home' && <HomeSection
+              currentEstimate={currentEstimate}
+              hasUnsavedChanges={hasUnsavedChanges}
+              refreshVersion={jobsRefreshVersion}
+              onNewJob={handleReset}
+              onNavigateSection={setActiveSection}
+              onOpenProfile={handleOpenCustomerProfile}
+            />}
 
             {/* Keep draft upload inputs mounted when another section is open. */}
             <div hidden={activeSection !== 'intake'}>
               <EntryCard
-                onProcessPdf={handleProcessPdf}
-                onProcessText={handleProcessText}
-                onLoadSample={handleLoadSample}
+                key={intakeSession}
+                onProcessPdf={(file, components) => withUnsavedGuard(() => { void handleProcessPdf(file, components); })}
+                onProcessText={(text) => withUnsavedGuard(() => { void handleProcessText(text); })}
+                onLoadSample={(key) => withUnsavedGuard(() => handleLoadSample(key))}
                 isProcessing={isProcessing}
                 currentEstimate={currentEstimate}
                 errorMessage={errorMessage}
@@ -626,6 +671,8 @@ export default function App() {
               {activeSection === 'customers' && (
                 <CustomersSection
                   currentEstimate={currentEstimate}
+                  onSaveCurrent={() => currentEstimate && persistEstimate(currentEstimate)}
+                  isSaving={isSaving}
                   onOpenProfile={handleOpenCustomerProfile}
                   onShowToast={showToast}
                 />

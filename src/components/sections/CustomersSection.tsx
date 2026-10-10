@@ -10,11 +10,12 @@ import {
   listCustomerProfiles,
   getCustomerProfile,
   deleteCustomerProfile,
-  saveCustomerProfile,
 } from '../../services/gappsApi';
 
 interface CustomersSectionProps {
   currentEstimate: EstimateResult | null;
+  onSaveCurrent: () => Promise<void> | null;
+  isSaving: boolean;
   onOpenProfile: (estimate: EstimateResult, profile: CustomerProfileSummary) => void;
   onShowToast: (type: 'success' | 'warning' | 'error', message: string) => void;
 }
@@ -31,6 +32,8 @@ const fmtDate = (iso?: string): string => {
 
 export const CustomersSection: React.FC<CustomersSectionProps> = ({
   currentEstimate,
+  onSaveCurrent,
+  isSaving,
   onOpenProfile,
   onShowToast,
 }) => {
@@ -39,7 +42,6 @@ export const CustomersSection: React.FC<CustomersSectionProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [openingId, setOpeningId] = useState<string | null>(null);
-  const [savingCurrent, setSavingCurrent] = useState(false);
   const [deleting, setDeleting] = useState<{
     isOpen: boolean;
     profile: CustomerProfileSummary | null;
@@ -71,16 +73,8 @@ export const CustomersSection: React.FC<CustomersSectionProps> = ({
 
   const handleSaveCurrent = async () => {
     if (!currentEstimate) return;
-    setSavingCurrent(true);
-    try {
-      const saved = await saveCustomerProfile(currentEstimate);
-      onShowToast('success', `Saved ${saved.client_name} (Claim ${saved.claim_number}) to customer profiles.`);
-      await refresh();
-    } catch (err: any) {
-      onShowToast('error', err?.message || 'Failed to save customer profile');
-    } finally {
-      setSavingCurrent(false);
-    }
+    await onSaveCurrent();
+    await refresh();
   };
 
   const handleOpen = async (p: CustomerProfileSummary) => {
@@ -105,11 +99,10 @@ export const CustomersSection: React.FC<CustomersSectionProps> = ({
           </div>
           <div>
             <h3 className="text-[15px] font-semibold tracking-tight text-slate-900">
-              Customer Profiles
+              Saved job records
             </h3>
             <p className="text-[12px] text-slate-500 mt-0.5">
-              Every processed estimate is saved as a customer record in the Google Workspace — reopen
-              any profile to continue editing on a future login.
+              Reopen a saved estimate or remove a job you no longer need.
             </p>
           </div>
         </div>
@@ -128,18 +121,17 @@ export const CustomersSection: React.FC<CustomersSectionProps> = ({
                   Save Current Estimate
                 </h3>
                 <p className="text-[12px] text-slate-500 mt-0.5">
-                  The current claim will be upserted into your customer records, keyed by client name +
-                  claim number — saving again updates the existing profile.
+                  Save the latest budget, trade packages, and selections for this job.
                 </p>
               </div>
             </div>
 
             <button
               onClick={() => void handleSaveCurrent()}
-              disabled={savingCurrent}
+              disabled={isSaving}
               className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-lg text-[13px] font-semibold bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-50 transition-colors shrink-0"
             >
-              {savingCurrent ? (
+              {isSaving ? (
                 <>
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
                   <span>Saving…</span>
@@ -239,7 +231,7 @@ export const CustomersSection: React.FC<CustomersSectionProps> = ({
                     {p.property_address || '—'}
                   </p>
                   <p className="text-[12px] text-slate-500">
-                    <span className="font-medium text-slate-700">Approved RCV:</span>{' '}
+                    <span className="font-medium text-slate-700">Estimate RCV:</span>{' '}
                     {formatMoney(Number(p.total_rcv) || 0)}
                   </p>
                   <p className="text-[12px] text-slate-500 flex items-center gap-1">

@@ -63,6 +63,8 @@ export interface TradeSection {
 }
 
 export interface EstimateResult {
+  /** Practice data; retained when a sample job is saved and reopened. */
+  is_sample?: boolean;
   project_meta: ProjectMeta;
   trade_sections: TradeSection[];
   extracted_at?: string;

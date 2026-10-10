@@ -23,8 +23,8 @@ const isPdfFile = (file: File): boolean =>
   file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
 
 interface EntryCardProps {
-  onProcessPdf: (file: File, componentsFile?: File | null) => Promise<void>;
-  onProcessText: (text: string) => Promise<void>;
+  onProcessPdf: (file: File, componentsFile?: File | null) => void | Promise<void>;
+  onProcessText: (text: string) => void | Promise<void>;
   onLoadSample: (sampleKey: string) => void;
   isProcessing: boolean;
   currentEstimate: EstimateResult | null;
@@ -40,7 +40,7 @@ export const EntryCard: React.FC<EntryCardProps> = ({
   errorMessage,
 }) => {
   const [mode, setMode] = useState<'upload' | 'paste' | 'sample'>('upload');
-  const [pastedText, setPastedText] = useState(RAW_ESTIMATE_SNIPPET);
+  const [pastedText, setPastedText] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
@@ -148,7 +148,7 @@ export const EntryCard: React.FC<EntryCardProps> = ({
               Estimate Intake &amp; Subcontractor Trade Roll-Up
             </h2>
             <p className="text-[12px] text-slate-500 mt-0.5">
-              Upload an Xactimate PDF or paste estimate text to synthesize trade packages, buyout budgets, and Gantt logic.
+              Upload an Xactimate PDF or paste estimate text to prepare the job’s trade packages and budget.
             </p>
           </div>
         </div>
@@ -237,7 +237,7 @@ export const EntryCard: React.FC<EntryCardProps> = ({
                       {selectedFile.name}
                     </p>
                     <p className="text-[11px] text-slate-500 mt-1 tabular-nums">
-                      {(selectedFile.size / 1024).toFixed(1)} KB · Ready to analyze with DeepSeek
+                      {(selectedFile.size / 1024).toFixed(1)} KB · Ready to process
                     </p>
                     <p className="text-[11px] text-red-600 mt-2 font-medium">
                       Click to choose another file
@@ -347,7 +347,7 @@ export const EntryCard: React.FC<EntryCardProps> = ({
             <div className="flex items-center justify-between pt-1">
               <div className="text-[11px] text-slate-500 flex items-center gap-1.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                <span>Zero client secrets · Server-side DeepSeek API · Instant JSON roll-up</span>
+                <span>Review extracted amounts before planning the work.</span>
               </div>
               <button
                 type="button"
@@ -408,7 +408,7 @@ export const EntryCard: React.FC<EntryCardProps> = ({
                 {isProcessing ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>Synthesizing Packages…</span>
+                    <span>Preparing trade packages…</span>
                   </>
                 ) : (
                   <>
@@ -424,7 +424,7 @@ export const EntryCard: React.FC<EntryCardProps> = ({
         {mode === 'sample' && (
           <div className="space-y-3">
             <p className="text-[12px] text-slate-600">
-              Select one of our pre-analyzed real restoration loss scenarios to immediately populate trade packages, buyout margins, and the Gantt schedule:
+              Explore the workflow with sample data. These practice jobs are not live customer estimates.
             </p>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-1">
@@ -531,8 +531,8 @@ export const EntryCard: React.FC<EntryCardProps> = ({
       {/* Card Footer */}
       <div className="px-5 py-3 border-t border-slate-100 bg-slate-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-[11px] text-slate-500">
         <div className="flex items-center gap-2">
-          <span className="font-semibold text-slate-700">Workflow Target:</span>
-          <span>Xactimate Estimate &rarr; Trade Packages &rarr; Buyout Budget &rarr; Gantt &rarr; Google Workspace</span>
+          <span className="font-semibold text-slate-700">Next steps:</span>
+          <span>Review estimate &rarr; Plan budget &rarr; Schedule work &rarr; Prepare documents</span>
         </div>
         <div>
           {currentEstimate ? (

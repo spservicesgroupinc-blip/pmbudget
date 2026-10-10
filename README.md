@@ -159,9 +159,35 @@ server from `server.ts` is not used on Vercel.
 | Variable | Required | Notes |
 | --- | --- | --- |
 | `DEEPSEEK_API_KEY` | Yes | Server-only secret for `api/*.ts` — never add a `VITE_` prefix |
+| `VITE_GAPPS_WEB_APP_URL` | No | Apps Script `/exec` URL; overrides the committed `env/gapps-config.json` during the build. Use the exact uppercase name. |
 | `DEEPSEEK_MODEL` | No | Defaults to `deepseek-chat` |
 | `DEEPSEEK_BASE_URL` | No | Defaults to `https://api.deepseek.com` |
 | `DEEPSEEK_MAX_TOKENS` | No | Defaults to `8192` |
+
+### Apps Script login configuration
+
+The Apps Script connection uses only its deployment URL. Do not add `APP_KEY`,
+`VITE_GAPPS_APP_KEY`, `GAPPS_APP_KEY`, or `ADMIN_SETUP_KEY` to Vercel, the browser
+config, or Apps Script properties. Login uses each person's email and password;
+saved jobs and exports use the session token returned by the backend.
+
+1. Use the current `/exec` URL from [env/gapps-config.json](env/gapps-config.json).
+2. If a Vercel override is needed, set **`VITE_GAPPS_WEB_APP_URL`** for each target
+   environment (Production, Preview, Development). Otherwise leave it unset so
+   the committed URL is bundled. A configured override takes precedence over JSON.
+   The old variable `vite_appscript_url` is unused; remove it rather than relying on it.
+3. Build and redeploy after changing either URL source. Existing deployments keep
+   the URL baked into their client bundle. Pulling variables into `env/.env.vercel`
+   does not update the remote project or an existing deployment.
+4. An `APP_KEY script property is missing` response means the selected URL serves
+   an older backend. Check the Vercel URL override and update the existing Apps
+   Script deployment to the key-free [Code.gs](apps-script/Code.gs); do not add a key.
+
+`GET /api/health` checks the AI service, not Apps Script login. The backend's GET
+health response alone also does not verify key-free login. A POST to `/exec` with
+`{"action":"login","email":"","password":""}` should return
+`Email and password are required.` rather than an app-key error; complete sign-in
+with an existing account to verify its credentials and session.
 
 - **Body size:** Vercel caps serverless request bodies at ~4.5 MB; the client already blocks
   uploads above 3.2 MB and recommends **Paste Text** for larger estimates.
@@ -170,9 +196,13 @@ server from `server.ts` is not used on Vercel.
 - **Service worker:** `/sw.js` is served `Cache-Control: public, max-age=0, must-revalidate` so
   PWA updates always revalidate.
 
-Deploy via CLI (repo: `spservicesgroupinc-blip/pmbudget` — not git-connected to Vercel):
+Deploy via CLI (repo: `spservicesgroupinc-blip/pmbudget`, Vercel project: `pmbudget`):
+This workspace already has a Vercel project link; only run `vercel link` for a
+fresh checkout that has no `.vercel/project.json` or `.vercel/repo.json`.
 
 ```bash
-npx vercel link      # one-time: link this folder to a Vercel project
+npx vercel link      # fresh, unlinked checkout only
+npm run verify:auth  # verify key-free account authentication offline
+npm run build       # bundle the selected Apps Script URL
 npx vercel deploy    # preview deployment (add --prod for production only when ready)
 ```

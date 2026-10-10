@@ -16,12 +16,15 @@ Saved jobs and exports still require a valid account session.
    dropdown and run it once. Approve the project's Google service permissions.
 5. Choose **Deploy → Manage deployments → Edit → New version → Deploy**.
    Editing the existing deployment preserves its URL.
-6. Reload [the local PM app](http://localhost:3011/). Choose **Create an account**,
+6. Reload [the local PM app](http://localhost:3000/). Choose **Create an account**,
    enter a name, email, password (8–128 characters), and confirmation, then sign in.
 
 Saving the editor source alone does not update the published web app.
 A response saying `APP_KEY script property is missing` or `Invalid setup key`
 means the configured URL is still serving the previous backend version.
+For a Vercel build, check `VITE_GAPPS_WEB_APP_URL` as well as `gapps-config.json`:
+the environment override wins. Update the selected backend or URL and redeploy
+the frontend; do not create an app key to work around the error.
 
 ## Create a new project
 
@@ -45,6 +48,13 @@ Only the URL is required in the app config:
 `VITE_GAPPS_WEB_APP_URL` can override that URL at build time. The only required
 connection settings are this Apps Script URL and the server's `DEEPSEEK_API_KEY`.
 Restart the dev server after changing environment variables.
+
+For Vercel, use the exact uppercase name `VITE_GAPPS_WEB_APP_URL` for an optional
+URL override in each target environment, or leave it unset to use the committed
+JSON config. The old `vite_appscript_url` name is unused. Never add `APP_KEY`,
+`VITE_GAPPS_APP_KEY`, `GAPPS_APP_KEY`, or `ADMIN_SETUP_KEY`. Rebuild and redeploy
+the frontend after changing its URL; existing builds retain their bundled URL.
+Editing a local `env/.env.vercel` snapshot does not update Vercel's remote settings.
 
 ## Database and accounts
 

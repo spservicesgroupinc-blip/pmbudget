@@ -19,8 +19,10 @@ for models, ports, and hosting are optional.
   first, then `env/.env` (legacy root-level `.env.local`/`.env` still work as a fallback;
   first file found wins, existing shell env is never overwritten).
 - Vite (`vite.config.ts`): `envDir: 'env'` — client-exposed vars must use the `VITE_` prefix.
-- Vercel: files here are **not deployed**; set the same variables in
-  Project → Settings → Environment Variables.
+- Vercel: ignored `.env*` files are **not deployed**; set server secrets in
+  Project → Settings → Environment Variables. The committed `gapps-config.json`
+  is imported into the client build. `env/.env.vercel` is only a local snapshot;
+  editing it does not change remote settings.
 - Apps Script backend: `src/services/gappsAuth.ts` imports `env/gapps-config.json`
   directly. `webAppUrl` is the deployed web-app `/exec` URL. Sign-up and login
   require no shared setup keys; saved jobs and exports require a signed-in
@@ -35,6 +37,7 @@ for models, ports, and hosting are optional.
 | `DEEPSEEK_MODEL` | No | `deepseek.ts` | Default `deepseek-chat` |
 | `DEEPSEEK_BASE_URL` | No | `deepseek.ts` | Default `https://api.deepseek.com` |
 | `DEEPSEEK_MAX_TOKENS` | No | `deepseek.ts` | Default `8192` |
+| `VITE_GAPPS_WEB_APP_URL` | No | `src/services/gappsAuth.ts` | Exact uppercase name; overrides the committed Apps Script `/exec` URL at build time. Set in each Vercel environment where an override is needed. |
 | `APP_URL` | No | AI Studio hosting | Injected automatically at runtime by AI Studio |
 | `PORT` | No | `server.ts` | Default `3000` |
 | `NODE_ENV` | No | `server.ts` | `production` serves the built `dist/` app; otherwise Vite middleware |
@@ -43,10 +46,16 @@ for models, ports, and hosting are optional.
 
 ## Deploying env changes to Vercel (learned the hard way, 2026-09-29)
 
+- Apps Script requires a deployment URL and individual account credentials.
+  Do not add `APP_KEY`, `VITE_GAPPS_APP_KEY`, `GAPPS_APP_KEY`, or `ADMIN_SETUP_KEY`.
+  The old `vite_appscript_url` variable is unused; use `VITE_GAPPS_WEB_APP_URL`
+  or leave the override unset and use the committed `gapps-config.json` URL.
 - Vercel **never sees `env/.env.local`** (git-ignored by `.env*`) — the variable must be set in
   **Project → Settings → Environment Variables** for every environment you actually deploy.
   A `Development`-scope entry does **not** reach deployed builds; production needs a `Production`-scope entry.
 - After adding/changing an env var, **redeploy** — existing deployments keep their old values.
+  This also applies to changing `gapps-config.json`: the URL is bundled at build time.
+  A stale `VITE_GAPPS_WEB_APP_URL` overrides an updated JSON file, so check both.
 - Store/paste the value **without surrounding quotes**. `.env` files may quote values
   (`DEEPSEEK_API_KEY="sk-..."`) and dotenv strips the quotes locally — but a raw copy/pipe
   keeps them, Vercel stores the quote characters as part of the secret, and DeepSeek then
@@ -54,3 +63,7 @@ for models, ports, and hosting are optional.
   The key line in `env/.env.local` is now unquoted so naive copy-paste is safe.
 - Verify a deployment: `GET https://<app>/api/health` → `"hasApiKey": true`, then process a
   small estimate and expect **HTTP 200** (not 500 with `DEEPSEEK_API_KEY is not configured`).
+  This verifies DeepSeek, not Apps Script login. Separately verify that the configured
+  `/exec` endpoint rejects an empty login with `Email and password are required.`
+  and accepts valid account credentials. An app-key error indicates an older backend
+  deployment or a stale URL override; update the deployment/URL instead of adding a key.

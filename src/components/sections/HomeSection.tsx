@@ -6,6 +6,7 @@ import { CustomerProfileSummary, getCustomerProfile, listCustomerProfiles } from
 interface HomeSectionProps {
   currentEstimate: EstimateResult | null;
   hasUnsavedChanges: boolean;
+  isBusy: boolean;
   refreshVersion: number;
   onNewJob: () => void;
   onNavigateSection: (id: string) => void;
@@ -17,7 +18,7 @@ const updatedTime = (job: CustomerProfileSummary) => Date.parse(job.updated_at |
 const dateLabel = (job: CustomerProfileSummary) => updatedTime(job)
   ? new Date(updatedTime(job)).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : 'Date unavailable';
 
-export function HomeSection({ currentEstimate, hasUnsavedChanges, refreshVersion, onNewJob, onNavigateSection, onOpenProfile }: HomeSectionProps) {
+export function HomeSection({ currentEstimate, hasUnsavedChanges, isBusy, refreshVersion, onNewJob, onNavigateSection, onOpenProfile }: HomeSectionProps) {
   const [jobs, setJobs] = useState<CustomerProfileSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -49,7 +50,7 @@ export function HomeSection({ currentEstimate, hasUnsavedChanges, refreshVersion
   const recent = jobs.filter((job) => updatedTime(job) >= Date.now() - 7 * 86400000).length;
 
   async function openJob(job: CustomerProfileSummary) {
-    if (opening.current) return;
+    if (opening.current || isBusy) return;
     opening.current = true;
     setOpeningId(job.customer_id);
     setOpenError(null);
@@ -72,7 +73,7 @@ export function HomeSection({ currentEstimate, hasUnsavedChanges, refreshVersion
           <h1 className="text-3xl font-semibold tracking-tight text-slate-900">Job overview</h1>
           <p className="mt-2 text-sm text-slate-500">Pick up a saved job or bring a new estimate into the workspace.</p>
         </div>
-        <button onClick={onNewJob} className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-red-600 px-4 text-sm font-semibold text-white hover:bg-red-700"><Plus className="h-4 w-4" /> New job</button>
+        <button onClick={onNewJob} disabled={isBusy || !!openingId} className="hidden min-h-11 items-center gap-2 rounded-lg bg-red-600 px-4 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-40 sm:inline-flex"><Plus className="h-4 w-4" /> New job</button>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-3">
@@ -81,10 +82,10 @@ export function HomeSection({ currentEstimate, hasUnsavedChanges, refreshVersion
           { label: 'Total estimate value', value: money.format(total), detail: 'RCV across saved estimates', icon: Building2 },
           { label: 'Updated this week', value: recent.toLocaleString(), detail: 'Jobs saved in the last 7 days', icon: CalendarDays },
         ].map(({ label, value, detail, icon: Icon }) => (
-          <div key={label} className="rounded-xl border border-slate-200 bg-white p-5">
-            <div className="flex items-center justify-between gap-3"><p className="text-sm font-medium text-slate-500">{label}</p><Icon className="h-4 w-4 text-slate-400" aria-hidden /></div>
-            <p className="mt-3 text-3xl font-semibold tracking-tight tabular-nums text-slate-900">{loading ? '…' : error ? '—' : value}</p>
-            <p className="mt-2 text-xs text-slate-500">{detail}</p>
+          <div key={label} className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 rounded-xl border border-slate-200 bg-white p-4 sm:block sm:p-5">
+            <div className="flex items-center justify-between gap-3"><p className="text-sm font-medium text-slate-500">{label}</p><Icon className="hidden h-4 w-4 text-slate-400 sm:block" aria-hidden /></div>
+            <p className="col-start-2 row-span-2 row-start-1 self-center text-2xl font-semibold tracking-tight tabular-nums text-slate-900 sm:mt-3 sm:text-3xl">{loading ? '…' : error ? '—' : value}</p>
+            <p className="mt-1 text-xs text-slate-500 sm:mt-2">{detail}</p>
           </div>
         ))}
       </div>
@@ -102,7 +103,7 @@ export function HomeSection({ currentEstimate, hasUnsavedChanges, refreshVersion
 
       <section className="overflow-hidden rounded-xl border border-slate-200 bg-white" aria-labelledby="saved-jobs-title">
         <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
-          <div><h2 id="saved-jobs-title" className="text-base font-semibold text-slate-900">Your jobs</h2><p className="mt-1 text-xs text-slate-500">Saved estimates, ordered by most recent activity.</p></div>
+          <div><h2 id="saved-jobs-title" className="text-base font-semibold text-slate-900">Your jobs</h2><p className="mt-1 text-xs text-slate-500">Open a saved estimate to continue planning the work.</p></div>
           <button onClick={() => setRefresh((n) => n + 1)} disabled={loading || !!openingId} aria-label="Refresh jobs" title="Refresh jobs" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-40"><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /></button>
         </div>
         <div className="flex flex-col gap-3 border-b border-slate-100 px-5 py-3 sm:flex-row">
@@ -128,7 +129,7 @@ export function HomeSection({ currentEstimate, hasUnsavedChanges, refreshVersion
                   <div className="min-w-0 sm:col-start-1 xl:col-auto"><p className="break-words text-xs font-medium text-slate-700">Claim {job.claim_number || '—'}</p><p className="mt-1 text-xs text-slate-500">{job.carrier || 'Carrier not provided'}</p></div>
                   <p className="text-sm font-semibold tabular-nums text-slate-700 xl:text-right">{job.total_rcv == null ? '—' : money.format(job.total_rcv)}<span className="ml-1 text-xs font-normal text-slate-500 xl:hidden">RCV</span></p>
                   <p className="text-xs leading-5 text-slate-500"><span className="xl:hidden">Saved </span>{dateLabel(job)}</p>
-                  <button disabled={!!openingId} onClick={() => void openJob(job)} aria-label={`Open job for ${job.client_name}`} className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-lg border border-slate-200 px-3 text-xs font-semibold text-slate-700 hover:border-red-200 hover:bg-red-50 hover:text-red-700 disabled:opacity-40 sm:col-start-2 sm:row-start-1 xl:col-auto xl:row-auto">{openingId === job.customer_id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <>Open <ArrowUpRight className="h-3.5 w-3.5" /></>}</button>
+                  <button disabled={!!openingId || isBusy} onClick={() => void openJob(job)} aria-label={`Open job for ${job.client_name}`} className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-lg border border-slate-200 px-3 text-xs font-semibold text-slate-700 hover:border-red-200 hover:bg-red-50 hover:text-red-700 disabled:opacity-40 sm:col-start-2 sm:row-start-1 xl:col-auto xl:row-auto">{openingId === job.customer_id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <>Open <ArrowUpRight className="h-3.5 w-3.5" /></>}</button>
                 </li>
               ))}
             </ul>

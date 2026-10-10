@@ -582,6 +582,7 @@ export default function App() {
             {activeSection === 'home' && <HomeSection
               currentEstimate={currentEstimate}
               hasUnsavedChanges={hasUnsavedChanges}
+              isBusy={isSaving || isProcessing}
               refreshVersion={jobsRefreshVersion}
               onNewJob={handleReset}
               onNavigateSection={setActiveSection}

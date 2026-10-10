@@ -145,7 +145,7 @@ export const EntryCard: React.FC<EntryCardProps> = ({
           </div>
           <div>
             <h2 className="text-[15px] font-semibold tracking-tight text-slate-900">
-              Estimate Intake &amp; Subcontractor Trade Roll-Up
+              Add an estimate
             </h2>
             <p className="text-[12px] text-slate-500 mt-0.5">
               Upload an Xactimate PDF or paste estimate text to prepare the job’s trade packages and budget.

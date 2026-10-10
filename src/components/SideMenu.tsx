@@ -131,7 +131,7 @@ export const SideMenu: React.FC<SideMenuProps> = ({
             {hasUnsavedChanges && <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">Modified</span>}
           </div>
           <p className="truncate text-sm font-semibold text-slate-900">{isProcessing ? 'Analyzing estimate…' : meta?.client_name || 'No job selected'}</p>
-          <p className="mt-1 truncate text-xs text-slate-500">{meta ? `Claim ${meta.claim_number}` : 'Open a saved job or upload an estimate'}</p>
+          <p className="mt-1 text-xs leading-5 text-slate-500">{meta ? `Claim ${meta.claim_number}` : 'Open a saved job or start a new estimate.'}</p>
         </div>
         <div className="min-h-0 overflow-y-auto rounded-b-xl border border-slate-200 bg-white p-2.5">
           <nav aria-label="Project navigation" className="space-y-5 py-2">{renderGroups()}</nav>

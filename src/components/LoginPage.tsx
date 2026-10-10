@@ -98,7 +98,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onAuthenticated }) => {
           </h1>
           <p className="text-[12px] text-slate-500 mt-1.5">
             {mode === 'signin'
-              ? 'Accounts are managed in the Hays + Sons user sheet. Exports are written to the company Google Workspace automatically.'
+              ? 'Access your jobs, budgets, schedules, and project documents.'
               : 'Enter your name, email, and password to create your account.'}
           </p>
         </div>

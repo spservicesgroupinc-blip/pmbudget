@@ -29,10 +29,10 @@ export const IntakeSection: React.FC<IntakeSectionProps> = ({
           <FileText className="w-6 h-6" />
         </div>
         <h3 className="text-[14px] font-semibold text-slate-800">
-          No Estimate Processed Yet
+          Ready for your estimate
         </h3>
         <p className="text-[12px] text-slate-500 max-w-sm mx-auto mt-1">
-          Use the pinned card above to upload an Xactimate insurance PDF or select a sample claim to start the reconstruction workflow.
+          Add an estimate above, then review the extracted job details before setting your budget.
         </p>
       </div>
     );
@@ -42,7 +42,7 @@ export const IntakeSection: React.FC<IntakeSectionProps> = ({
   const trades = estimate.trade_sections;
   const rolledUpTotal = trades.reduce((acc, t) => acc + (t.billable_revenue || 0), 0);
   const variance = Math.abs(rolledUpTotal - meta.total_rcv);
-  const isReconciled = variance < 1.0;
+  const isReconciled = trades.length > 0 && meta.total_rcv > 0 && variance < 1.0;
 
   // Extraction quality notice (purely presentational — no state or API calls).
   const extractionWarnings = estimate.processing?.warnings || [];
@@ -82,13 +82,13 @@ export const IntakeSection: React.FC<IntakeSectionProps> = ({
             <TrendingUp className="w-4 h-4 text-slate-400" />
           </div>
           <div className="text-[24px] font-bold text-slate-900 tabular-nums">
-            ${(meta.net_claim || meta.total_rcv).toLocaleString(undefined, {
+            {meta.net_claim == null ? 'Not provided' : `$${meta.net_claim.toLocaleString(undefined, {
               minimumFractionDigits: 2,
               maximumFractionDigits: 2,
-            })}
+            })}`}
           </div>
           <div className="mt-1 text-[11px] text-slate-500">
-            Less deductible applied
+            As reported in the estimate
           </div>
         </div>
 
@@ -107,7 +107,7 @@ export const IntakeSection: React.FC<IntakeSectionProps> = ({
             })}
           </div>
           <div className="mt-1 text-[11px] text-slate-500">
-            {meta.overhead_and_profit ? 'Included 10/10 O&P' : 'None itemized'}
+            {meta.overhead_and_profit ? 'As reported in the estimate' : 'None itemized'}
           </div>
         </div>
 
@@ -183,15 +183,15 @@ export const IntakeSection: React.FC<IntakeSectionProps> = ({
             </div>
             <div>
               <h3 className="text-[15px] font-semibold tracking-tight text-slate-900">
-                Claim File &amp; Policy Metadata
+                Job &amp; claim details
               </h3>
               <p className="text-[12px] text-slate-500">
                 Extracted directly from Xactimate estimate header and summary report
               </p>
             </div>
           </div>
-          <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
-            Audit Ready
+          <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-slate-50 text-slate-600 border border-slate-200">
+            Review required
           </span>
         </div>
 
@@ -231,7 +231,7 @@ export const IntakeSection: React.FC<IntakeSectionProps> = ({
               Policy Number
             </span>
             <p className="text-[14px] font-semibold font-mono text-slate-900">
-              {meta.policy_number || 'Listed in claim file'}
+              {meta.policy_number || 'Not provided'}
             </p>
             <p className="text-[11px] text-slate-400 mt-0.5">Property coverage</p>
           </div>
@@ -258,7 +258,7 @@ export const IntakeSection: React.FC<IntakeSectionProps> = ({
       <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-none">
         <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
           <h3 className="text-[15px] font-semibold tracking-tight text-slate-900">
-            Synthesized Trade Work Packages ({trades.length})
+            Trade packages ({trades.length})
           </h3>
           <span className="text-[11px] text-slate-500">
             Grouped by Xactimate Category Codes

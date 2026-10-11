@@ -2,6 +2,8 @@ import type { CustomerSelectionInput } from '../types/estimate.js';
 
 // Concrete products with visible quantities are evidence for a coverage check.
 // The follow-up AI pass still verifies replacement scope, exclusions and pricing.
+// Source lines may live in EITHER uploaded document (full estimate or component
+// report); selection descriptions must cover every product visible in both.
 const PRODUCTS: ReadonlyArray<[string, RegExp]> = [
   ['dishwasher', /\bdish\s*washers?\b/i],
   ['refrigerator', /\brefrigerators?\b/i],
@@ -12,8 +14,13 @@ const PRODUCTS: ReadonlyArray<[string, RegExp]> = [
   ['carpet', /\bcarpet\b/i],
   ['vinyl plank', /\b(?:lvp|luxury vinyl plank|vinyl plank)\b/i],
   ['hardwood flooring', /\b(?:hardwood|wood floor(?:ing)?)\b/i],
+  ['flooring', /\b(?:floor(?:ing)?s?|lvp|lvt|laminate|hardwood|wood floor(?:ing)?|vinyl (?:plank|floor|sheet)|carpet|tiles?)\b/i],
   ['tile', /\b(?:porcelain|ceramic|floor|wall) tiles?\b/i],
   ['countertop', /\bcountertops?\b/i],
+  ['cabinets', /\b(?:cabinets?|cabinetry|vanit(?:y|ies))\b/i],
+  ['paint', /\b(?:paints?|painting|wallcover(?:ing)?|wallpaper)\b/i],
+  ['light fixture', /\b(?:recessed\s+(?:lights?|cans?|lighting)|light(?:ing)?\s+fixtures?|pendants?|chandeliers?|sconces?|ceiling\s+fans?|vanity\s+lights?)\b/i],
+  ['baseboard or trim', /\b(?:base\s*boards?|crown\s+moldings?|trims?)\b/i],
   ['faucet', /\bfaucets?\b/i],
   ['sink', /\bsinks?\b/i],
   ['toilet', /\btoilets?\b/i],
@@ -36,6 +43,9 @@ export function findCustomerSelectionCoverageGaps(
     if (/\b(?:credit|credited|omitted|excluded|exclude|do not perform)\b/i.test(line)) return false;
     if (/\b(?:remove|removal|detach|reset|reinstall|cleaning)\b/i.test(line) &&
         !/\b(?:replace|replacement|R\s*&\s*R)\b/i.test(line)) return false;
+    // Rough-in, supply and hidden construction lines are not customer-facing
+    // finishes and must not demand a selection row.
+    if (/\b(?:valve|drain|wiring|breaker|sub\s*panel|duct|housing|flue|rough(?:-|\s)?in|supply\s+line)\b/i.test(line)) return false;
     return true;
   });
   return PRODUCTS.filter(([, pattern]) => lines.some((line) => pattern.test(line)) &&

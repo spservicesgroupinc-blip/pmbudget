@@ -10,6 +10,7 @@ import { extractPdfText } from './pdfText.js';
 import { hasApiKey, resolveModel } from './deepseek.js';
 import { ESTIMATE_ENGINE_VERSION, processEstimate } from './xactEngine.js';
 import { WORK_ORDER_ENGINE_VERSION, generateWorkOrderPackage } from './workOrderEngine.js';
+import { componentDocumentHeader, estimateDocumentHeader } from './src/utils/sourceDocuments.js';
 import type { EstimateResult } from './src/types/estimate.js';
 
 export interface RoutineResult {
@@ -27,6 +28,7 @@ export function healthPayload() {
       'budget-engine-v2',
       'material-allowance',
       'customer-selections',
+      'customer-selection-rerun',
       'deterministic-audit',
       'json-repair-retries',
       'field-work-orders',
@@ -81,7 +83,7 @@ export async function runProcessEstimate(payload: {
     // (legacy inline response schema removed — superseded by the strict
     // ESTIMATE_RESPONSE_SCHEMA in xactEngine.ts)
 
-    let sourceText = '';
+    let documentText = '';
     let sourceLabel = 'pasted estimate text';
 
     if (typeof pdfBase64 === 'string' && pdfBase64) {
@@ -96,10 +98,10 @@ export async function runProcessEstimate(payload: {
           },
         };
       }
-      sourceText = extractedText;
+      documentText = extractedText;
       sourceLabel = typeof filename === 'string' && filename ? filename : 'uploaded PDF';
     } else if (typeof textContent === 'string' && textContent.trim()) {
-      sourceText = textContent;
+      documentText = textContent;
     } else {
       return {
         status: 400,
@@ -107,19 +109,25 @@ export async function runProcessEstimate(payload: {
       };
     }
 
-    // Optional second upload: the Xactimate Component Breakdown Report. Its
-    // text is merged into the SAME extraction pass beneath a marker header,
-    // so the engine's "Case A" rule (exact component quantities, no added
-    // waste factors) applies to the material allowance roll-up — one AI call,
-    // one reconciled estimate.
+    // Label the primary document with a `=====` marker header, exactly like
+    // the optional component report below, so every extraction prompt can
+    // attribute customer selections (and pricing) to the document they came
+    // from. Either uploaded document alone can carry the selection data.
+    let sourceText = `${estimateDocumentHeader(sourceLabel)}\n\n${documentText}`;
+    let componentLabel: string | undefined;
+
+    // Optional second upload: the Xactimate Component Breakdown Report. Both
+    // documents are merged into the SAME extraction pass beneath their marker
+    // headers — one AI call, one reconciled estimate — and the customer
+    // selection prompts read EITHER or BOTH documents for finish choices.
     if (typeof componentsPdfBase64 === 'string' && componentsPdfBase64) {
       const componentText = await extractPdfText(componentsPdfBase64);
       if (componentText.trim()) {
-        const componentLabel =
+        componentLabel =
           typeof componentsFilename === 'string' && componentsFilename
             ? componentsFilename
             : 'component breakdown report';
-        sourceText = `${sourceText}\n\n===== COMPONENT BREAKDOWN REPORT (${componentLabel}) =====\n\n${componentText}`;
+        sourceText = `${sourceText}\n\n${componentDocumentHeader(componentLabel)}\n\n${componentText}`;
       } else {
         return { status: 422, body: { error: 'The component breakdown PDF has no readable text. Supply a readable report so material quantities and customer selections can be extracted accurately.' } };
       }
@@ -131,11 +139,14 @@ export async function runProcessEstimate(payload: {
 
     // Budget-engine v2: LLM extraction + normalization + deterministic
     // reconciliation (model arithmetic is never trusted), with retries,
-    // truncation detection and JSON repair passes.
+    // truncation detection and JSON repair passes. Customer selection data is
+    // re-read from the labeled documents by a standalone rerun whenever the
+    // budget pass drops the list or omits a source-visible product.
     const estimate = await processEstimate(sourceText, {
       userPrompt: typeof prompt === 'string' && prompt.trim() ? prompt : undefined,
     });
     estimate.source_filename = estimate.source_filename || sourceLabel;
+    if (componentLabel) estimate.components_filename = estimate.components_filename || componentLabel;
     return { status: 200, body: estimate };
   } catch (err) {
     console.error('Error in /api/process-estimate:', err);

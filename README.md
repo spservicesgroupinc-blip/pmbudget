@@ -76,9 +76,12 @@ concurrency, per-crew deterministic fallback templates when the AI is unavailabl
 ## Customer Selections & Material Allowances
 
 Intake accepts an optional second PDF — the **Xactimate Component Breakdown Report** — alongside the
-estimate. Both are merged into one extraction pass (the component report is appended beneath a
-marker header), so the engine's "exact component quantities" rule drives the material allowance
-roll-up.
+estimate. Both documents are labeled beneath `=====` marker headers and merged into one extraction
+pass, so every AI prompt can read customer selection data from EITHER uploaded document: the full
+estimate carries the finish choices as room-by-room line items (flooring, cabinets, countertops,
+paint, fixtures, lighting, hardware, appliances, ...) and the component report adds exact material
+quantities and material-only pricing for the same products. The engine's "exact component
+quantities" rule drives the material allowance roll-up.
 
 - `xactEngine.processEstimate` explicitly extracts all customer finish choices, including
   subcontractor-supplied carpet, plumbing, lighting and exterior finishes. The original rows
@@ -100,8 +103,11 @@ roll-up.
   Reprocess older estimates to recover finish choices omitted by the previous extraction.
   Token-limited responses retry rather than accepting partial selection lists. Oversized source
   documents and unreadable component reports return actionable errors instead of dropping content.
-  A source product coverage check requests a focused selection review when a visible product
-  was omitted by the budget extraction, and rejects a still-incomplete result.
+  A source product coverage check (flooring, cabinets, paint, trim, appliances, fixtures, ...)
+  triggers a **standalone selection rerun** over the original uploaded document(s) whenever a
+  visible product is missing from the extracted list — the same dedicated pass also recovers a
+  list the budget extraction omitted entirely, and it re-reads BOTH documents for choices found
+  in either one. A still-incomplete result is rejected before any partial sheet can be issued.
   Run `npm run verify:selections` for offline checks, or append `-- --live` to verify a real AI call.
 
 ## HTTP API

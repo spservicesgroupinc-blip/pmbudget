@@ -1,5 +1,6 @@
 /** Server-only recovery of missing selection prices from the original source. */
 import { deepseekJsonWithMeta } from './deepseek.js';
+import { SOURCE_DOCUMENTS_GUIDE } from './src/utils/sourceDocuments.js';
 import type { CustomerSelectionInput } from './src/types/estimate.js';
 
 const compact = (value: string) => value.toLowerCase().replace(/\s+/g, ' ').trim();
@@ -27,13 +28,16 @@ export async function recoverCustomerSelectionPrices(
     [{ selection_index: index, ...item }] : []);
   if (!missing.length) return { selections, tokens: 0, recovered: 0 };
   const response = await deepseekJsonWithMeta<unknown>({
-    system: `Recover MATERIAL-ONLY customer selection prices from the original estimate and component report.
+    system: `Recover MATERIAL-ONLY customer selection prices from the original uploaded document(s).
+${SOURCE_DOCUMENTS_GUIDE}
 Return ONLY this JSON object: {"prices":[{"selection_index":0,"material_unit_cost":null,"material_total":null,"material_quantity":null,"material_uom":"EA","evidence":""}]}.
 Return one row per requested selection_index; do not add, remove, rename or regroup selections.
-Search ALL rooms and component tables for the same product, grade, size and finish.
+A price may be listed in EITHER document: search ALL rooms of the full estimate and ALL tables
+of the component report for the same product, grade, size and finish.
 Read column headers carefully: Material/Mat, component unit cost, extended material amount,
 Actual Cost Qty and Component Qty can provide the amount even when the combined UNIT PRICE cannot.
-Prefer the matching component report. Turnkey plumbing, electrical and carpet still need material prices.
+Prefer the matching component report when both documents list the product.
+Turnkey plumbing, electrical and carpet still need material prices.
 material_unit_cost is the pre-tax material rate in material_uom as printed in the source.
 Never calculate a unit cost yourself: material_unit_cost MUST literally appear in the source.
 When the table has only Material Total, material_unit_cost MUST be null. Copy the printed
@@ -53,7 +57,7 @@ Include the price (and quantity when using a total). Never invent values.
 Never use supply/install UNIT PRICE, line TOTAL, RCV, labor/equipment, tax, O&P or trade totals
 as material prices. Do not estimate a material percentage or use market pricing.
 If only a combined price exists, return null amounts and empty evidence for that item.`,
-    user: `SELECTIONS NEEDING PRICES:\n${JSON.stringify(missing)}\n\nFULL SOURCE ESTIMATE AND COMPONENT REPORT:\n${sourceText}`,
+    user: `SELECTIONS NEEDING PRICES:\n${JSON.stringify(missing)}\n\nSOURCE DOCUMENTS (full Xactimate estimate and/or component breakdown report):\n${sourceText}`,
     temperature: 0,
     label: 'customer-selection-pricing',
     attempts: 3,

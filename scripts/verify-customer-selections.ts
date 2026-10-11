@@ -24,6 +24,7 @@ import { extractPdfText } from '../pdfText.ts';
 import { ESTIMATE_RESPONSE_SCHEMA, normalizeEstimate, processEstimate } from '../xactEngine.ts';
 import { runProcessEstimate } from '../serverRoutines.ts';
 import { findCustomerSelectionCoverageGaps } from '../src/utils/customerSelectionCoverage.ts';
+import { componentDocumentHeader, estimateDocumentHeader } from '../src/utils/sourceDocuments.ts';
 import { recoverCustomerSelectionPrices } from '../customerSelectionPricing.ts';
 import type { CustomerSelectionInput, EstimateResult, MaterialAllowanceItem } from '../src/types/estimate.ts';
 
@@ -234,8 +235,25 @@ async function main() {
     let missingListRejected = false;
     try { await processEstimate('FCV Flooring 1000.00'); } catch { missingListRejected = true; }
     check('AI: omitted selection list cannot be reported as complete', missingListRejected);
+    let rerunCalls = 0;
+    globalThis.fetch = async () => {
+      rerunCalls++;
+      const content = rerunCalls === 1 ? { ...rawEstimate, customer_selections: undefined } : rawEstimate;
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) }, finish_reason: 'stop' }] }), { status: 200 });
+    };
+    const reran = await processEstimate('FCV Flooring 1000.00');
+    check(
+      'rerun: standalone selection rerun recovers a list the budget pass omitted',
+      rerunCalls === 2 && reran.customer_selection_source?.length === 4 &&
+        Boolean(reran.processing?.warnings?.some((warning) => warning.includes('standalone rerun')))
+    );
     check('coverage: detects an omitted appliance from the source', findCustomerSelectionCoverageGaps('APP Dishwasher 1 EA, material-only $400.00/EA.', source).includes('dishwasher'));
     check('coverage: removal-only and credits do not trigger missing choices', findCustomerSelectionCoverageGaps('APP Remove dishwasher ONLY 1 EA\nPLM Credited toilet 1 EA', source).length === 0);
+    check('coverage: cabinets and flooring choices found in the full estimate require a selection', ['cabinets', 'flooring'].every((product) => findCustomerSelectionCoverageGaps('CAB Base cabinets, shaker 8 LF\nFCV Luxury vinyl plank flooring 40 SF', []).includes(product)));
+    check('coverage: paint and trim choices found in the full estimate require a selection', ['paint', 'baseboard or trim'].every((product) => findCustomerSelectionCoverageGaps('PNT Interior paint 6 GL\nFNC Baseboard 120 LF', []).includes(product)));
+    check('coverage: a choice extracted from either document resolves the gap', findCustomerSelectionCoverageGaps('FCV Luxury vinyl plank flooring 40 SF', [source[0]]).length === 0);
+    check('coverage: rough-in and supply lines do not demand a selection', findCustomerSelectionCoverageGaps('PLM Faucet supply line 1 EA\nELE Wire 200 LF', []).length === 0);
+    check('documents: both uploads are labeled with marker headers', estimateDocumentHeader('a.pdf') === '===== XACTIMATE ESTIMATE (a.pdf) =====' && componentDocumentHeader('b.pdf') === '===== COMPONENT BREAKDOWN REPORT (b.pdf) =====');
     let coverageCalls = 0;
     globalThis.fetch = async () => {
       coverageCalls++;
@@ -293,6 +311,7 @@ async function main() {
     else process.env.DEEPSEEK_API_KEY = originalKey;
   }
   check('AI prompt: every room, turnkey choices, no row limit', prompt.includes('EVERY room') && prompt.includes('turnkey') && prompt.includes('Do not impose a row limit'));
+  check('AI prompt: selection data explicitly read from either or both uploaded documents', prompt.includes('EITHER or BOTH') && prompt.includes('COMPONENT BREAKDOWN REPORT') && prompt.includes('XACTIMATE ESTIMATE'));
   check('pipeline: source choices survive budget turnkey filtering', pipeline.customer_selections?.length === 3 && pipeline.material_allowances?.length === 1);
   check('pipeline: turnkey price preserved before procurement filtering', pipeline.customer_selections?.find((item) => /faucet/i.test(item.description))?.allowance_per_unit === 100);
   check('pipeline: missing price produces named source-review warning', Boolean(unresolved.processing?.warnings?.some((warning) => warning.includes('Bathroom faucet'))));

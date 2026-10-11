@@ -13,7 +13,9 @@ import { applyBudgetEngine, DIVISION_PROFILES, matchDivision } from './src/utils
 import { buildCustomerSelections, classifySelectionCategory } from './src/utils/customerSelections.js';
 import { findCustomerSelectionCoverageGaps } from './src/utils/customerSelectionCoverage.js';
 import { recoverCustomerSelectionPrices } from './customerSelectionPricing.js';
+import { runCustomerSelectionRerun } from './customerSelectionExtraction.js';
 import { mineEstimateDollars } from './estimateTextMiner.js';
+import { SOURCE_DOCUMENTS_GUIDE } from './src/utils/sourceDocuments.js';
 import type { MinedEstimate } from './estimateTextMiner.js';
 import type {
   EstimateResult,
@@ -22,7 +24,7 @@ import type {
   TradeSection,
 } from './src/types/estimate.js';
 
-export const ESTIMATE_ENGINE_VERSION = 'budget-engine-v4-selection-pricing';
+export const ESTIMATE_ENGINE_VERSION = 'budget-engine-v5-selection-rerun';
 
 const DIVISION_TABLE = `- Demolition & Hauling | DEM, DMO, WTR | In-House Self-Perform | direct labor = 72% of retail labor; consumables only
 - Framing & Rough Carpentry | FRM | In-House Self-Perform | direct labor = 72%
@@ -82,11 +84,19 @@ For each trade package provide:
 - exclusions: credited, omitted or DO NOT PERFORM items for this package; [] when none.
 
 3) CUSTOMER SELECTIONS (customer_selections, independent of procurement)
-Read EVERY room and line item, including customer choices supplied by turnkey subcontractors.
+${SOURCE_DOCUMENTS_GUIDE}
+Customer selection data is often SPLIT across the two documents: the full estimate names the
+choice and the installed room-by-room scope, while the component report supplies the exact
+material quantity and material-only price for the same product - join them into ONE row per
+product, never duplicate.
+Read EVERY room and line item of the full estimate AND every table of the component report,
+including customer choices supplied by turnkey subcontractors.
 Extract ALL new/replacement finishes the customer must choose: flooring/carpet, tile and grout
 color, cabinets, countertops, paint/wallcovering, trim/doors, plumbing fixtures, decorative
-lighting, windows/exterior finishes, hardware and appliances. Never omit a finish because its
-trade is turnkey or its material price is absent. Do not impose a row limit.
+lighting, windows/exterior finishes, hardware and appliances. Customer-choice signals such as
+"customer to select", "owner to choose", "TBD", and color/finish/grade/style notes indicate a
+selection even when no price is shown. Never omit a finish because it appears in only one
+document, its trade is turnkey or its material price is absent. Do not impose a row limit.
 - Exclude removal-only, detach/reset/reinstall, cleaning, labor-only, credited/negative and
   DO NOT PERFORM items, and hidden construction supplies (drywall, framing, adhesives, etc.).
   A replacement line that includes installation still represents a customer material choice.
@@ -104,8 +114,8 @@ trade is turnkey or its material price is absent. Do not impose a row limit.
   NEVER use a combined supply/install rate, labor, tax or O&P as a material allowance.
   Use null when material-only pricing is unavailable; an explicit zero is allowed only if stated.
 - trade matches the owning trade_name; suggested vendor may be omitted if unknown.
-- Before returning, check every source room/category against this list for omitted choices.
-  Return [] only when the source contains no customer-selectable replacement finishes.
+- Before returning, check every source room/category in BOTH documents against this list for
+  omitted choices. Return [] only when the source contains no customer-selectable replacement finishes.
 
 4) MATERIAL ALLOWANCE ITEMS (procurement list, Output 2)
 Itemize direct materials trades must procure. Rules:
@@ -205,6 +215,16 @@ export const ESTIMATE_RESPONSE_SCHEMA = {
   },
   required: ['project_meta', 'trade_sections', 'customer_selections'],
 } as const;
+
+/**
+ * customer_selections schema slice shared with the standalone rerun prompt
+ * (`runCustomerSelectionRerun` in customerSelectionExtraction.ts).
+ */
+const SELECTION_SCHEMA_JSON = JSON.stringify(
+  ESTIMATE_RESPONSE_SCHEMA.properties.customer_selections,
+  null,
+  2
+);
 
 const num = (value: unknown): number => {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
@@ -524,63 +544,67 @@ export async function processEstimate(
       null,
       2
     )}\n\nReturn ONLY a single valid JSON object matching this schema. No markdown fences, no commentary.`,
-    user: `${userPrompt}\n\nXACTIMATE ESTIMATE TEXT:\n\n${estimateText}`,
+    user: `${userPrompt}\n\nSOURCE DOCUMENTS (full Xactimate estimate and/or component breakdown report, each introduced by a ===== header):\n\n${estimateText}`,
     temperature: 0.1,
     label: 'estimate',
     attempts: 3,
     requireComplete: true,
   });
 
-  if (!data || typeof data !== 'object' || !Array.isArray((data as Record<string, unknown>).customer_selections)) {
-    throw new Error('AI did not return the required customer selection list. Reprocess the estimate to extract all finish choices.');
+  if (!data || typeof data !== 'object') {
+    throw new Error('AI did not return the required estimate object. Reprocess the estimate.');
+  }
+  const rawData = data as Record<string, unknown>;
+
+  // Standalone selection rerun #1 - the budget pass omitted the list entirely.
+  // A dedicated pass over the original uploaded document(s) recovers it, so a
+  // transient omission cannot block the customer selection sheet.
+  let selectionRerunTokens = 0;
+  let selectionRerunReason = '';
+  if (!Array.isArray(rawData.customer_selections)) {
+    const rerun = await runCustomerSelectionRerun({
+      sourceText: estimateText,
+      existing: [],
+      coverageGaps: [],
+      selectionSchemaJson: SELECTION_SCHEMA_JSON,
+    });
+    selectionRerunTokens += rerun.tokens;
+    if (!Array.isArray(rerun.rows)) {
+      throw new Error('AI did not return the required customer selection list. Reprocess the estimate to extract all finish choices.');
+    }
+    selectionRerunReason = 'missing-list';
+    rawData.customer_selections = rerun.rows;
   }
 
-  const { estimate, warnings } = normalizeEstimate(data);
+  const { estimate, warnings } = normalizeEstimate(rawData);
+  if (selectionRerunReason === 'missing-list') {
+    warnings.push(`Budget extraction omitted the customer selection list; the standalone rerun over the uploaded document(s) recovered ${estimate.customer_selection_source?.length || 0} choice(s).`);
+  }
+
   const coverageGaps = findCustomerSelectionCoverageGaps(estimateText, estimate.customer_selection_source || []);
-  let selectionReviewTokens = 0;
   if (coverageGaps.length) {
-    // A separate selection-only pass prevents the trade-budget taxonomy from
-    // hiding products (for example, appliances without a canonical division).
-    const review = await deepseekJsonWithMeta<unknown>({
-      system: `You extract customer finish choices from restoration estimates.
-Return ONLY a JSON object with customer_selections, using this schema:
-${JSON.stringify(ESTIMATE_RESPONSE_SCHEMA.properties.customer_selections)}
-Read every room and include all replacement finishes and appliances, even when
-subcontractors supply them or no budget trade division exists for that product.
-Each item needs trade, description, qty, uom and allowance_per_unit; optional
-component_code, vendor and notes. Use a plain-language owning trade if needed.
-Preserve the descriptions of the existing choices where they identify the same
-product. Return the COMPLETE corrected list, not only the missing products.
-Exclude removal-only, detach/reset, credited, omitted, cleaning and labor-only work.
-Include replacement material even if its line also includes installation labor.
-Use exact component quantities when available, otherwise installed quantities;
-add no waste. Never count both an estimate line and its component-report equivalent.
-Keep different products, sizes, grades and finishes separate; aggregate identical
-products across rooms and retain their room names and choices in notes.
-Only explicitly supported MATERIAL-ONLY, pre-tax pricing may be allowance_per_unit.
-Read material columns and component pricing tables. When only a material total is
-shown, divide by the matching material quantity, converting units when necessary.
-Never copy a combined installation/labor rate or total RCV. Use null when unknown.
-Never fabricate products or quantities. Check the highlighted coverage gaps against
-the source before returning the complete list.`,
-      user: `Coverage gaps: ${coverageGaps.join(', ')}\nExisting choices:\n${JSON.stringify(estimate.customer_selection_source)}\n\nSOURCE ESTIMATE AND COMPONENT REPORT:\n${estimateText}`,
-      temperature: 0,
-      label: 'customer-selection-review',
-      attempts: 3,
-      requireComplete: true,
+    // A dedicated selection-only rerun re-reads EITHER uploaded document, so
+    // a choice visible in the full estimate or the component report can never
+    // be hidden by the trade-budget taxonomy (for example, appliances without
+    // a canonical division).
+    const rerun = await runCustomerSelectionRerun({
+      sourceText: estimateText,
+      existing: estimate.customer_selection_source || [],
+      coverageGaps,
+      selectionSchemaJson: SELECTION_SCHEMA_JSON,
     });
-    const reviewed = review.data as Record<string, unknown> | null;
-    if (!reviewed || !Array.isArray(reviewed.customer_selections)) {
-      throw new Error('The customer selection coverage review did not return a complete list. Reprocess the estimate.');
+    selectionRerunTokens += rerun.tokens;
+    if (!Array.isArray(rerun.rows)) {
+      throw new Error('The customer selection rerun did not return a complete list. Reprocess the estimate.');
     }
-    const corrected = normalizeEstimate({ ...(data as Record<string, unknown>), customer_selections: reviewed.customer_selections });
+    selectionRerunReason = selectionRerunReason ? `${selectionRerunReason}+coverage-gaps` : 'coverage-gaps';
+    const corrected = normalizeEstimate({ ...rawData, customer_selections: rerun.rows });
     const remaining = findCustomerSelectionCoverageGaps(estimateText, corrected.estimate.customer_selection_source || []);
     if (remaining.length) {
       throw new Error(`AI could not verify the customer selections for: ${remaining.join(', ')}. Review the source scope and reprocess; a partial selection sheet was not issued.`);
     }
     estimate.customer_selection_source = corrected.estimate.customer_selection_source;
     warnings.push(...corrected.warnings.filter((warning) => warning.startsWith('Customer selection')));
-    selectionReviewTokens = review.usage?.total_tokens || 0;
   }
   // Preserve source material prices before turnkey filtering and procurement
   // budget scaling. Customer allowances are independent of internal buyout budgets.
@@ -592,7 +616,7 @@ the source before returning the complete list.`,
   const pricingReviewNeeded = estimate.customer_selection_source.some((item) => item.allowance_per_unit === null);
   const pricing = await recoverCustomerSelectionPrices(estimateText, estimate.customer_selection_source);
   estimate.customer_selection_source = pricing.selections;
-  selectionReviewTokens += pricing.tokens;
+  selectionRerunTokens += pricing.tokens;
   const mined = mineEstimateDollars(estimateText);
   warnings.push(...applyMinedBackfill(estimate, mined).warnings);
   const withBudget = applyBudgetEngine(estimate);
@@ -611,7 +635,7 @@ the source before returning the complete list.`,
 
   withBudget.processing = {
     model,
-    engine: `${ESTIMATE_ENGINE_VERSION} (attempts=${attempts}, tokens=${usage?.total_tokens === undefined ? 'n/a' : usage.total_tokens + selectionReviewTokens}, selection_review=${coverageGaps.length > 0}, pricing_review=${pricingReviewNeeded})`,
+    engine: `${ESTIMATE_ENGINE_VERSION} (attempts=${attempts}, tokens=${usage?.total_tokens === undefined ? 'n/a' : usage.total_tokens + selectionRerunTokens}, selection_rerun=${selectionRerunReason || 'none'}, pricing_review=${pricingReviewNeeded})`,
     warnings: processWarnings,
     processed_at: new Date().toISOString(),
     duration_ms: Date.now() - startedAt,

@@ -119,6 +119,7 @@ export function consolidateCustomerSelections(items: CustomerSelectionItem[]): C
       item.uom, item.allowance_per_unit, normalized(item.vendor),
       item.allowance_status || 'confirmed', item.source,
       item.installed_unit_cost,
+      item.allowance_basis || 'material', item.installed_tax_per_unit,
     ]);
     const existing = groups.get(key);
     if (!existing) {
@@ -157,8 +158,10 @@ export function buildCustomerSelections(
     // Explicit source material pricing must survive procurement budget scaling
     // and conflicts between procurement rows from different rooms.
     const hasExtracted = typeof extracted === 'number' && Number.isFinite(extracted) && extracted >= 0;
-    const confirmed = hasExtracted || Boolean(audited);
-    const unit = confirmed ? round2(hasExtracted ? extracted : audited!.unit_cost) : 0;
+    const hasInstalled = typeof input.installed_unit_cost === 'number' && Number.isFinite(input.installed_unit_cost) && input.installed_unit_cost >= 0;
+    const installed = !hasExtracted && !audited && hasInstalled;
+    const confirmed = hasExtracted || Boolean(audited) || installed;
+    const unit = confirmed ? round2(hasExtracted ? extracted : installed ? input.installed_unit_cost! : audited!.unit_cost) : 0;
     items.push({
       id: '', category, trade: input.trade.trim(), component_code: input.component_code,
       description: input.description.trim(), qty: input.qty,
@@ -167,6 +170,7 @@ export function buildCustomerSelections(
       vendor: input.vendor || audited?.vendor, notes: input.notes,
       allowance_status: confirmed ? 'confirmed' : 'needs_review', source: 'estimate',
       ...(input.installed_unit_cost !== undefined ? { installed_unit_cost: input.installed_unit_cost } : {}),
+      ...(installed ? { allowance_basis: 'installed' as const, installed_tax_per_unit: input.installed_tax_per_unit } : {}),
     });
   };
   const seen = new Set<string>();
@@ -206,7 +210,11 @@ export function computeSelectionTotals(
       0
     )
   );
-  const tax = round2(subtotal * SELECTION_TAX_RATE);
+  const priced = (items || []).filter((item) => item.allowance_status !== 'needs_review' && Number.isFinite(item.allowance_total));
+  const materialSubtotal = priced.reduce((sum, item) => sum + (item.allowance_basis === 'installed' ? 0 : item.allowance_total), 0);
+  const installedTax = priced.reduce((sum, item) => sum + (item.allowance_basis === 'installed' &&
+    Number.isFinite(item.installed_tax_per_unit) ? round2(item.qty * item.installed_tax_per_unit!) : 0), 0);
+  const tax = round2(round2(materialSubtotal) * SELECTION_TAX_RATE + installedTax);
   return { subtotal, tax, total: round2(subtotal + tax) };
 }
 
@@ -253,6 +261,7 @@ export function computeCustomerSelectionsChecksum(
       item.allowance_per_unit,
       item.category,
       item.allowance_status,
+      item.allowance_basis || 'material', item.installed_tax_per_unit,
       item.vendor,
       item.notes,
     ]),

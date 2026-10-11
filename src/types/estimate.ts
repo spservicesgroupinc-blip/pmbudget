@@ -126,6 +126,10 @@ export interface CustomerSelectionItem {
   allowance_total: number;
   /** Source REPLACE rate including installation; never a material-only price. */
   installed_unit_cost?: number;
+  /** Omitted on older rows, which retain their material-only meaning. */
+  allowance_basis?: 'material' | 'installed';
+  /** Source row sales tax divided by source quantity; installed rates include labor. */
+  installed_tax_per_unit?: number;
   vendor?: string;
   notes?: string;
   /** Unknown material-only pricing must be confirmed before issuing the sheet. */
@@ -143,6 +147,7 @@ export interface CustomerSelectionInput {
   allowance_per_unit: number | null;
   /** Source REPLACE rate including installation, retained for office review. */
   installed_unit_cost?: number;
+  installed_tax_per_unit?: number;
   vendor?: string;
   notes?: string;
 }

@@ -96,6 +96,7 @@ export const CustomerSelectionsSection: React.FC<CustomerSelectionsSectionProps>
   const groups = useMemo(() => groupSelectionsByCategory(items), [items]);
   const totals = useMemo(() => computeSelectionTotals(items), [items]);
   const unpricedCount = items.filter((item) => item.allowance_status === 'needs_review').length;
+  const installedCount = items.filter((item) => item.allowance_basis === 'installed').length;
 
   if (!estimate) {
     return (
@@ -264,7 +265,9 @@ export const CustomerSelectionsSection: React.FC<CustomerSelectionsSectionProps>
         )}
         <span>
           {unpricedCount > 0
-            ? `${unpricedCount} selection item(s) need a material allowance. The estimate's installed prices include labor; they are shown as references where available. Upload a Component Breakdown Report or enter the material allowance in $/Unit. Rebuild uses the existing extracted data.`
+            ? `${unpricedCount} selection item(s) need a price. Upload a Component Breakdown Report or enter an allowance in $/Unit. Rebuild uses the existing extracted data.`
+            : installedCount > 0
+            ? `${installedCount} installed allowance(s) use the PDF's combined labor-and-material prices. Source sales tax is added separately; review the allowances, then generate the customer sheet.`
             : items.length > 0
             ? `Customer selections ready — review and adjust the ${items.length} allowance item(s), then generate the allowance sheet.`
             : 'No customer selections yet — upload the estimate with its optional Component Breakdown Report to populate selection allowances automatically, or add items manually.'}
@@ -280,7 +283,7 @@ export const CustomerSelectionsSection: React.FC<CustomerSelectionsSectionProps>
             </div>
             <div>
               <h2 className="text-[15px] font-semibold tracking-tight text-slate-900">
-                Customer Selections &amp; Material Allowances
+                Customer Selections &amp; Allowances
               </h2>
               <p className="text-[12px] text-slate-500 mt-0.5">
                 Flooring, cabinets, countertops and finish allowances by SF / LF / item — review, edit, and generate the customer sheet.
@@ -405,7 +408,9 @@ export const CustomerSelectionsSection: React.FC<CustomerSelectionsSectionProps>
                             }}
                             className={`${inputClass} mt-1.5 text-[11px] text-slate-500`}
                           />
-                          {item.installed_unit_cost !== undefined && (
+                          {item.allowance_basis === 'installed' ? (
+                            <p className="mt-1.5 text-[11px] font-semibold text-slate-600">Installed allowance · includes labor and materials</p>
+                          ) : item.installed_unit_cost !== undefined && (
                             <p className="mt-1.5 text-[11px] text-slate-500">
                               Estimate reference: {formatMoney(item.installed_unit_cost)}/{item.uom} including installation
                               {' · '}{formatMoney(round2(item.qty * item.installed_unit_cost))} before tax and O&amp;P.
@@ -465,14 +470,14 @@ export const CustomerSelectionsSection: React.FC<CustomerSelectionsSectionProps>
 
                         {/* Allowance / unit */}
                         <div className="w-[88px]">
-                          {fieldLabel('$/Unit')}
+                          {fieldLabel(item.allowance_basis === 'installed' ? 'Installed $/Unit' : 'Material $/Unit')}
                           <input
                             type="number"
                             min={0}
                             step="0.01"
                             defaultValue={item.allowance_status === 'needs_review' ? '' : item.allowance_per_unit}
                             placeholder={item.allowance_status === 'needs_review' ? 'Confirm' : undefined}
-                            aria-label={`Material allowance per unit for ${item.description}`}
+                            aria-label={`${item.allowance_basis === 'installed' ? 'Installed' : 'Material'} allowance per unit for ${item.description}`}
                             onBlur={(e) => {
                               commitUnitCost(item.id, e.target.value);
                               const value = Number(e.target.value);
@@ -490,7 +495,7 @@ export const CustomerSelectionsSection: React.FC<CustomerSelectionsSectionProps>
                             {item.allowance_status === 'needs_review' ? 'Needs price' : formatMoney(item.allowance_total)}
                           </p>
                           <p className="text-[10px] text-slate-400 text-right mt-0.5">
-                            total allowance
+                            {item.allowance_basis === 'installed' ? 'installed allowance' : 'material allowance'}
                           </p>
                         </div>
 
@@ -683,7 +688,7 @@ export const CustomerSelectionsSection: React.FC<CustomerSelectionsSectionProps>
           </div>
           <div className="bg-white rounded-xl border border-slate-200 shadow-none px-5 py-4">
             <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">
-              Indiana Material Sales Tax (7%)
+              {installedCount ? 'Sales Tax (source installed + 7% material)' : 'Indiana Material Sales Tax (7%)'}
             </p>
             <p className="text-[24px] font-bold text-slate-900 tabular-nums mt-1">
               {formatMoney(totals.tax)}

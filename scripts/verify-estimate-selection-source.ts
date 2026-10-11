@@ -10,7 +10,8 @@ import { readFileSync } from 'node:fs';
 import { extractPdfText } from '../pdfText.ts';
 import { processEstimate } from '../xactEngine.ts';
 import { findCustomerSelectionCoverageGaps } from '../src/utils/customerSelectionCoverage.ts';
-import { buildCustomerSelections, classifySelectionCategory } from '../src/utils/customerSelections.ts';
+import { buildCustomerSelections, classifySelectionCategory, computeSelectionTotals } from '../src/utils/customerSelections.ts';
+import { buildCustomerSelectionsPdf } from '../src/utils/customerSelectionsPdf.ts';
 import { extractXactimateSelectionSource } from '../xactSelectionSource.ts';
 import type { CustomerSelectionInput } from '../src/types/estimate.ts';
 
@@ -112,9 +113,20 @@ async function main() {
       const selections = result.customer_selections || [];
       check(`${label}: only the three supported paint choices reach the customer page`, selections.length === 3 && selections.every((item) => item.category === 'Paint & Finishes'), selections.map((item) => item.description).join('; '));
       check(`${label}: exact source quantities survive without room-area substitution`, paints.every((expected) => selections.some((item) => item.description === expected.description && item.qty === expected.qty && item.uom === expected.uom)));
-      check(`${label}: combined REPLACE rates are not treated as material-only prices`, selections.length === 3 && selections.every((item) => item.allowance_status === 'needs_review' && item.allowance_per_unit === 0));
+      check(`${label}: combined REPLACE rates become clearly distinguished installed allowances`, selections.length === 3 && selections.every((item, index) => item.allowance_status === 'confirmed' && item.allowance_basis === 'installed' && item.allowance_per_unit === expectedInstalled[index]) && Boolean(result.customer_selection_source?.every((item) => item.allowance_per_unit === null)));
       const rebuilt = buildCustomerSelections(result.material_allowances, result.customer_selection_source);
       check(`${label}: rebuilding selections retains the three exact installed references`, rebuilt.length === 3 && rebuilt.every((item, index) => item.installed_unit_cost === expectedInstalled[index]));
+      check(`${label}: rebuild preserves allowance basis, prices and source tax`, JSON.stringify(rebuilt) === JSON.stringify(selections));
+      const totals = computeSelectionTotals(selections);
+      check(`${label}: installed allowances use source tax rather than taxing all labor at 7%`, totals.subtotal === 276.20 && totals.tax === 4.61 && totals.total === 280.81, JSON.stringify(totals));
+      const mixed = computeSelectionTotals([...selections, { ...selections[0], id: 'material-test', qty: 1, allowance_per_unit: 100, allowance_total: 100, allowance_basis: 'material' }]);
+      check(`${label}: mixed installed and material allowances use their own tax basis`, mixed.tax === 11.61 && mixed.total === 387.81);
+      if (label === 'empty model inventory') {
+        const pdf = await buildCustomerSelectionsPdf(result);
+        const pdfText = await extractPdfText(Buffer.from(pdf).toString('base64'));
+        check('Customer sheet can be generated directly from the uploaded estimate', (await PDFDocument.load(pdf)).getPageCount() >= 1);
+        check('Customer sheet labels every installed allowance and prints the correct tax and total', (pdfText.match(/Installed allowance \(labor \+ materials\)/g) || []).length === 3 && pdfText.includes('$4.61') && pdfText.includes('$280.81'));
+      }
     } catch (error) {
       check(`${label}: processing completes for the uploaded repair estimate`, false, error instanceof Error ? error.message : String(error));
     }

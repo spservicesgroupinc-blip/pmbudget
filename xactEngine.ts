@@ -363,6 +363,7 @@ export function normalizeEstimate(raw: unknown): { estimate: EstimateResult; war
       vendor: str(input.vendor) || undefined,
       notes: str(input.notes) || undefined,
       ...(materialPrice(input.installed_unit_cost) !== null ? { installed_unit_cost: materialPrice(input.installed_unit_cost)! } : {}),
+      ...(materialPrice(input.installed_tax_per_unit) !== null ? { installed_tax_per_unit: materialPrice(input.installed_tax_per_unit)! } : {}),
     });
   }
 
@@ -643,7 +644,7 @@ export async function processEstimate(
   }
 
   const { estimate, warnings } = normalizeEstimate(rawData);
-  if (sourceSelections !== null) warnings.push(`Verified ${sourceSelections.length} customer finish choice(s) directly against the numbered PDF estimate rows. Installed REPLACE rates are retained as references; material-only prices are not stated in this table.`);
+  if (sourceSelections !== null) warnings.push(`Verified ${sourceSelections.length} customer finish choice(s) directly against the numbered PDF estimate rows. REPLACE rates are used as installed allowances including labor; source sales tax is retained separately.`);
   if (selectionRerunReason === 'missing-list') {
     warnings.push(`Budget extraction omitted the customer selection list; the standalone rerun over the uploaded document(s) recovered ${estimate.customer_selection_source?.length || 0} choice(s).`);
   }
@@ -685,7 +686,7 @@ export async function processEstimate(
   // Preserve source material prices before turnkey filtering and procurement
   // budget scaling. Customer allowances are independent of internal buyout budgets.
   estimate.customer_selection_source = (estimate.customer_selection_source || []).map((input) => {
-    if (input.allowance_per_unit !== null) return input;
+    if (input.allowance_per_unit !== null || input.installed_unit_cost !== undefined) return input;
     const matched = buildCustomerSelections(estimate.material_allowances, [input])[0];
     return matched?.allowance_status === 'confirmed' ? { ...input, allowance_per_unit: matched.allowance_per_unit } : input;
   });

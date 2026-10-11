@@ -12,6 +12,7 @@ export function extractXactimateSelectionSource(sourceText: string): CustomerSel
     description: row.description, qty: row.qty, uom: row.uom,
     allowance_per_unit: null,
     installed_unit_cost: row.replace,
+    installed_tax_per_unit: row.tax / row.qty,
     notes: [row.room, /\bpaint|stain\b/i.test(row.description) ? 'Customer to choose color/finish.' : 'Customer to choose replacement finish.'].filter(Boolean).join('; '),
   }));
 }

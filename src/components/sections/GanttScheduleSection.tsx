@@ -570,7 +570,11 @@ export const GanttScheduleSection: React.FC<GanttScheduleSectionProps> = ({
           : 'Full screen — view and edit the timeline across the whole window'
       }
       onClick={() => setIsFullscreen((value) => !value)}
-      className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg text-[12px] font-semibold border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 transition-colors"
+      className={`inline-flex items-center gap-1.5 h-9 px-3 rounded-lg text-[12px] font-semibold border transition-colors shrink-0 ${
+        isFullscreen
+          ? 'border-slate-900 bg-slate-900 text-white hover:bg-slate-800'
+          : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+      }`}
     >
       {isFullscreen ? (
         <Minimize2 className="w-3.5 h-3.5" />
@@ -693,10 +697,9 @@ export const GanttScheduleSection: React.FC<GanttScheduleSectionProps> = ({
               <>
                 {renderViewScale()}
                 {renderCriticalPathToggle()}
-                {renderFullscreenToggle()}
               </>
             )}
-            <div className="flex items-center gap-4 text-[11px] text-slate-500">
+            <div className="hidden md:flex items-center gap-4 text-[11px] text-slate-500">
               <span className="flex items-center gap-1.5">
                 <span className="w-3 h-3 rounded bg-red-600" />
                 <span>Critical Path</span>
@@ -710,6 +713,9 @@ export const GanttScheduleSection: React.FC<GanttScheduleSectionProps> = ({
                 <span>Weekend</span>
               </span>
             </div>
+            {/* Always on the timeline card itself, so expanding and minimizing
+                is reachable without hunting in the toolbar above. */}
+            {renderFullscreenToggle()}
           </div>
         </div>
 

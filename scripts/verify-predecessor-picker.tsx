@@ -189,6 +189,15 @@ const modalSource = readFileSync(new URL('../src/components/TaskDetailsModal.tsx
 
 check('full screen: overlay covers the viewport', ganttSource.includes('fixed inset-0 z-50 flex flex-col'));
 check('full screen: toggle button is labelled for both states', ganttSource.includes('Exit full screen') && ganttSource.includes('View and edit the timeline full screen'));
+check(
+  'full screen: the toggle is on the timeline card itself, not only in the toolbar above',
+  (ganttSource.match(/\{renderFullscreenToggle\(\)\}/g) || []).length >= 2,
+  `${(ganttSource.match(/\{renderFullscreenToggle\(\)\}/g) || []).length} call site(s)`
+);
+check(
+  'full screen: the expanded state highlights the minimize control',
+  ganttSource.includes("'border-slate-900 bg-slate-900 text-white hover:bg-slate-800'")
+);
 check('full screen: chart area grows to fill the overlay', ganttSource.includes("'flex-1 min-h-0 overflow-auto p-3'"));
 check('full screen: Escape collapses it when no dialog is open', ganttSource.includes("event.key !== 'Escape'") && ganttSource.includes('[role="dialog"][aria-modal="true"]'));
 check('full screen: page scroll is locked while expanded', ganttSource.includes("document.body.style.overflow = 'hidden'"));

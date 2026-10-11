@@ -6,6 +6,7 @@ export interface XactimateSelectionRow {
   qty: number;
   uom: string;
   replace: number;
+  tax: number;
   room: string;
 }
 
@@ -22,6 +23,7 @@ export function readXactimateSelectionRows(source: string): XactimateSelectionRo
     const line = lines[i].trim();
     const roomHeader = line.match(/^(.+?)\s+Height:\s*/i);
     if (roomHeader) room = roomHeader[1].trim();
+    if (/^DESCRIPTION\b/i.test(line) && !/^DESCRIPTION\s+(?:QTY|QUANTITY)\s+REMOVE\s+REPLACE\s+TAX\s+O&P\s+TOTAL\s*$/i.test(line)) return null;
     if (/^DESCRIPTION\s+(?:QTY|QUANTITY)\s+REMOVE\s+REPLACE\s+TAX\s+O&P\s+TOTAL\s*$/i.test(line)) {
       table = true;
       found = true;
@@ -41,7 +43,8 @@ export function readXactimateSelectionRows(source: string): XactimateSelectionRo
     // Refuse other column layouts rather than interpreting ACV or tax as a rate.
     if (amounts.length !== 5 || amounts.some((token) => !/^-?[\d,]+\.\d{2}$/.test(token))) return null;
     rows.push({ line: text, description: match[1].trim(), qty: Number(match[2].replace(/,/g, '')),
-      uom: match[3].toUpperCase(), replace: Number(amounts[1].replace(/,/g, '')), room });
+      uom: match[3].toUpperCase(), replace: Number(amounts[1].replace(/,/g, '')),
+      tax: Number(amounts[2].replace(/,/g, '')), room });
   }
   return found ? rows : null;
 }

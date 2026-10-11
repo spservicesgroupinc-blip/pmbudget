@@ -3,7 +3,8 @@
  *
  * Customer-facing money document: allowance amounts are drawn deliberately
  * (the same sanctioned exception as subcontract contract amounts). Carrier
- * RCV, O&P, margins and carrier unit rates are never printed; dynamic text
+ * RCV, O&P and margins are never printed. Source installed rates are permitted
+ * as explicitly labeled installed allowances; dynamic text
  * still passes through the redaction choke point so no Xactimate category
  * codes or pricing language can leak. Runs in the browser and in Node
  * verification scripts.
@@ -266,7 +267,8 @@ class SelectionsPacket {
     });
     this.y = markY - 46;
 
-    this.page.drawText(sanitize('Customer Selections & Material Allowance Sheet'), {
+    const hasInstalled = estimate.customer_selections?.some((item) => item.allowance_basis === 'installed');
+    this.page.drawText(sanitize(hasInstalled ? 'Customer Selections & Allowance Sheet' : 'Customer Selections & Material Allowance Sheet'), {
       x: MARGIN,
       y: this.y,
       font: this.bold,
@@ -325,7 +327,7 @@ class SelectionsPacket {
     this.y -= 14;
 
     this.staticLines(
-      'The allowances below are the budgeted maximum amounts available for each customer material selection. Quantities, allowance rates and suggested vendors are listed for review. Any selection exceeding its allowance requires written change-order approval before purchase. Unused allowance balances are not paid out in cash.',
+      `${hasInstalled ? 'Rows labeled Installed allowance include labor and materials. Their sales tax is copied from the source estimate; material-only allowances use 7% material sales tax. ' : ''}The allowances below are the budgeted maximum amounts available for each customer finish selection. Quantities, allowance rates and suggested vendors are listed for review. Any selection exceeding its allowance requires written change-order approval before purchase. Unused allowance balances are not paid out in cash.`,
       this.reg,
       9.5,
       SLATE_600,
@@ -383,7 +385,8 @@ class SelectionsPacket {
     items.forEach((item, rowIndex) => {
       const descriptions = this.wrapClean(item.description, this.reg, 9.5, COL_DESC_W - 8);
       const vendors = this.wrapClean(item.vendor || '-', this.reg, 8, COL_VENDOR_W - 4);
-      const notes = item.notes ? this.wrapClean(item.notes, this.italic, 8, COL_DESC_W - 8) : [];
+      const allowanceNote = item.allowance_basis === 'installed' ? 'Installed allowance (labor + materials).' : 'Material-only allowance.';
+      const notes = this.wrapClean([allowanceNote, item.notes].filter(Boolean).join(' '), this.italic, 8, COL_DESC_W - 8);
       // Long descriptions and room lists continue in bounded fragments instead
       // of being silently truncated or overflowing the page.
       let first = true;
@@ -477,7 +480,7 @@ class SelectionsPacket {
 
     const rows: Array<[string, string, number, ReturnType<typeof rgb>, boolean]> = [
       ['Selection allowance subtotal', formatMoney(totals.subtotal), 10, INK, false],
-      ['Indiana material sales tax (7.00%)', formatMoney(totals.tax), 10, INK, false],
+      [items.some((item) => item.allowance_basis === 'installed') ? 'Sales tax (source installed + 7% material)' : 'Indiana material sales tax (7.00%)', formatMoney(totals.tax), 10, INK, false],
       ['TOTAL CUSTOMER SELECTION ALLOWANCE', formatMoney(totals.total), 12, RED_DARK, true],
     ];
     for (const [label, amount, size, color, isTotal] of rows) {
@@ -541,9 +544,9 @@ class SelectionsPacket {
 
   async finish(estimate: EstimateResult): Promise<Uint8Array> {
     const client = sanitize(estimate.project_meta?.client_name || 'Project');
-    this.doc.setTitle(`Customer Selections & Material Allowance Sheet — ${client}`);
+    this.doc.setTitle(`Customer Selections & Allowance Sheet — ${client}`);
     this.doc.setAuthor('Hays + Sons Complete Restoration');
-    this.doc.setSubject('Customer material selection allowances');
+    this.doc.setSubject('Customer finish selection allowances');
     this.doc.setProducer('Hays + Sons — Restoration Document Suite');
     this.doc.setKeywords(['customer selections', 'material allowance', 'restoration', this.checksum]);
     this.doc.setCreationDate(this.generatedLabel ? new Date(this.generatedLabel) : new Date());

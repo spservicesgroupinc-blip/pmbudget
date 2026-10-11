@@ -106,9 +106,11 @@ quantities" rule drives the material allowance roll-up.
   SF/LF quantities and color choices; room dimensions, existing carpet work, carpet pad and
   install-only trim never become replacement selections. An empty selection list is valid
   when the source has no selectable finishes. Unsupported layouts retain the AI extraction path.
-  `REPLACE` rates are kept as labeled installed-price references, independently of material
-  allowances. They cannot establish material-only costs. Rebuild uses stored extraction;
-  upload/reprocess with a component report or confirm missing material allowances to issue a sheet.
+  When material-only pricing is absent, `REPLACE` rates become clearly labeled **installed
+  allowances (labor + materials)** on the page and exported sheet. Installed rows use the
+  source row's sales tax, rather than applying 7% tax to labor. Material-only rows retain 7%
+  material tax. Rebuild preserves this distinction and never converts an installed price
+  into a material-only rate. Upload a component report when a material-only budget is needed.
   Token-limited responses retry rather than accepting partial selection lists. Oversized source
   documents and unreadable component reports return actionable errors instead of dropping content.
   A source product coverage check (flooring, cabinets, paint, trim, appliances, fixtures, ...)

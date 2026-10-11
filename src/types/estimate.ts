@@ -122,7 +122,7 @@ export interface CustomerSelectionItem {
   uom: string;
   /** Customer-facing allowance per unit (SF / LF / EA). */
   allowance_per_unit: number;
-  /** qty x allowance_per_unit, rounded to cents. */
+  /** Printed source component total, or qty x allowance_per_unit rounded to cents. */
   allowance_total: number;
   /** Source REPLACE rate including installation; never a material-only price. */
   installed_unit_cost?: number;
@@ -130,6 +130,8 @@ export interface CustomerSelectionItem {
   allowance_basis?: 'material' | 'installed';
   /** Source row sales tax divided by source quantity; installed rates include labor. */
   installed_tax_per_unit?: number;
+  /** Printed component total can differ from qty x rate because source qty is rounded. */
+  source_pricing?: { qty: number; unit_cost: number; total: number };
   vendor?: string;
   notes?: string;
   /** Unknown material-only pricing must be confirmed before issuing the sheet. */
@@ -148,6 +150,7 @@ export interface CustomerSelectionInput {
   /** Source REPLACE rate including installation, retained for office review. */
   installed_unit_cost?: number;
   installed_tax_per_unit?: number;
+  source_pricing?: { qty: number; unit_cost: number; total: number };
   vendor?: string;
   notes?: string;
 }

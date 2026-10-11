@@ -111,6 +111,12 @@ quantities" rule drives the material allowance roll-up.
   source row's sales tax, rather than applying 7% tax to labor. Material-only rows retain 7%
   material tax. Rebuild preserves this distinction and never converts an installed price
   into a material-only rate. Upload a component report when a material-only budget is needed.
+  Standard `MATERIAL COMPONENTS` tables are also parsed directly: material rows are separated
+  from identically headed labor/equipment tables, preparation supplies are excluded, and matching
+  paint material replaces application-scope rows while retaining all painted areas in notes.
+  Printed component totals are preserved when displayed quantities are rounded; editing quantity
+  or rate recomputes the allowance. This prevents duplicate paint rows and procurement budget
+  scaling from changing the customer's source material allowance.
   Token-limited responses retry rather than accepting partial selection lists. Oversized source
   documents and unreadable component reports return actionable errors instead of dropping content.
   A source product coverage check (flooring, cabinets, paint, trim, appliances, fixtures, ...)

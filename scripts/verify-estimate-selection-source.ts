@@ -10,10 +10,11 @@ import { readFileSync } from 'node:fs';
 import { extractPdfText } from '../pdfText.ts';
 import { processEstimate } from '../xactEngine.ts';
 import { findCustomerSelectionCoverageGaps } from '../src/utils/customerSelectionCoverage.ts';
-import { buildCustomerSelections, classifySelectionCategory, computeSelectionTotals } from '../src/utils/customerSelections.ts';
+import { buildCustomerSelections, classifySelectionCategory, computeSelectionTotals, selectionAllowanceTotal } from '../src/utils/customerSelections.ts';
 import { buildCustomerSelectionsPdf } from '../src/utils/customerSelectionsPdf.ts';
 import { extractXactimateSelectionSource } from '../xactSelectionSource.ts';
 import type { CustomerSelectionInput } from '../src/types/estimate.ts';
+import { componentDocumentHeader, estimateDocumentHeader } from '../src/utils/sourceDocuments.ts';
 
 let failures = 0;
 const check = (label: string, ok: boolean, detail = '') => {
@@ -152,8 +153,39 @@ async function main() {
     '1. Paint the surface area - two coats 192.00 SF 1.23 4.30 48.10 288.56 240.00',
   ].join('\n');
   check('Unsupported table layout remains on the model extraction path', extractXactimateSelectionSource(unsupported) === null);
-  check('A malformed supported price row cannot yield a partial deterministic inventory', extractXactimateSelectionSource(text.replace('1.23 4.30 48.10 288.56', '1.23 4.30 48.10')) === null);
+  check('A malformed supported price row cannot yield a partial deterministic inventory', extractXactimateSelectionSource(text.replace(/1\.23\s+4\.30\s+48\.10\s+288\.56/, '1.23 4.30 48.10')) === null);
   check('Mixed supported and unsupported tables cannot drop the unsupported room choices', extractXactimateSelectionSource(`${text}\n${unsupported}`) === null);
+
+  const componentLines = [
+    'MATERIAL COMPONENTS', 'Code Description Quantity @ Unit Price Total',
+    'PNTCALK Caulking - acrylic 0.21 TB @ 4.015 0.85*',
+    'PNTL Latex paint 1.11 GL @ 57.180 63.41*',
+    "PNTPUT Painter's putty 0.04 GL @ 26.480 1.05*",
+    'PNTSANDP 160 - 180 grit sandpaper - per sheet 0.44 SH @ 1.173 0.51*',
+    'FCCPRE1/2 Carpet pad - rebond, 6 lb 104.96 SF @ 0.524 55.00',
+    'FCCTACK Carpet tackless strip - 400 lf/box 0.06 BX @ 42.840 2.49*',
+    'Total 158.67', 'EQUIPMENT COMPONENTS', 'Code Description Quantity @ Unit Price Total',
+    'FCCPS Carpet power stretcher 0.35 DA @ 45.678 15.91*',
+    'Total 48.87', 'LABOR COMPONENTS (CONTRACTOR)', 'Code Description Quantity @ Unit Price Total',
+    'PNT Painter 2.49 HR @ 84.53 210.24*', 'Total 20.19 HR 1,526.54',
+  ];
+  const components = process.argv[3] ? await extractPdfText(readFileSync(process.argv[3]).toString('base64')) : componentLines.join('\n');
+  const both = `${estimateDocumentHeader('estimate.pdf')}\n${text}\n${componentDocumentHeader('components.pdf')}\n${components}`;
+  const joined = extractXactimateSelectionSource(both);
+  check('Two documents join the three paint application scopes to one physical paint product', joined?.length === 1 && joined[0].component_code === 'PNTL' && paints.every((paint) => joined[0].notes?.includes(paint.description)));
+  check('Component quantities and prices are copied exactly without adding waste', joined?.[0].qty === 1.11 && joined[0].uom === 'GL' && joined[0].allowance_per_unit === 57.18 && joined[0].source_pricing?.total === 63.41);
+  check('Coverage accepts paint on existing baseboard without demanding new trim', findCustomerSelectionCoverageGaps(both, joined || []).length === 0);
+  for (const description of ['Caulking - acrylic', "Painter's putty", '160 - 180 grit sandpaper - per sheet']) check(`${description} is preparation, not a customer finish`, classifySelectionCategory('Painting & Wallcovering', description) === undefined);
+  const merged = await pipelineWithModelChoices(both, polluted);
+  check('Two-document pipeline corrects polluted AI output into one confirmed material selection', merged.customer_selections?.length === 1 && merged.customer_selections[0].allowance_status === 'confirmed' && merged.customer_selections[0].allowance_basis !== 'installed');
+  const totals = computeSelectionTotals(merged.customer_selections);
+  check('Component report printed total survives displayed quantity rounding', totals.subtotal === 63.41 && totals.tax === 4.44 && totals.total === 67.85, JSON.stringify(totals));
+  check('Component pricing remains stable through rebuild', JSON.stringify(buildCustomerSelections(merged.material_allowances, merged.customer_selection_source)) === JSON.stringify(merged.customer_selections));
+  check('Editing component quantity recomputes the allowance', selectionAllowanceTotal({ ...merged.customer_selections![0], qty: 2 }) === 114.36);
+  check('Ambiguous component products keep the AI matching path', extractXactimateSelectionSource(both.replace('PNTL', 'PNTALT Enamel paint 1.00 GL @ 30.000 30.00\nPNTL')) === null);
+  check('Invalid component totals cannot be marked verified', extractXactimateSelectionSource(both.replace('63.41*', '999.00*')) === null);
+  const sheet = await extractPdfText(Buffer.from(await buildCustomerSelectionsPdf(merged)).toString('base64'));
+  check('Joined material allowance exports with printed source prices and all room scope notes', sheet.includes('$63.41') && sheet.includes('$67.85') && paints.every((paint) => sheet.replace(/\s+/g, ' ').includes(paint.description)));
   if (failures) process.exitCode = 1;
 }
 

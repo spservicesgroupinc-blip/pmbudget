@@ -19,6 +19,7 @@ import {
   computeSelectionTotals,
   groupSelectionsByCategory,
   SELECTION_CATEGORIES,
+  selectionAllowanceTotal,
 } from '../../utils/customerSelections';
 import {
   buildCustomerSelectionsPdf,
@@ -131,7 +132,7 @@ export const CustomerSelectionsSection: React.FC<CustomerSelectionsSectionProps>
     if (!raw.trim() || !Number.isFinite(qty) || qty <= 0) return;
     const next = items.map((item) =>
       item.id === id
-        ? { ...item, qty, allowance_total: round2(qty * item.allowance_per_unit) }
+        ? { ...item, qty, allowance_total: selectionAllowanceTotal({ ...item, qty }) }
         : item
     );
     commit(next);
@@ -144,7 +145,7 @@ export const CustomerSelectionsSection: React.FC<CustomerSelectionsSectionProps>
     const unit = round2(parsed);
     const next = items.map((item) =>
       item.id === id
-        ? { ...item, allowance_per_unit: unit, allowance_total: round2(item.qty * unit), allowance_status: 'confirmed' as const }
+        ? { ...item, allowance_per_unit: unit, allowance_total: selectionAllowanceTotal({ ...item, allowance_per_unit: unit }), allowance_status: 'confirmed' as const }
         : item
     );
     commit(next);

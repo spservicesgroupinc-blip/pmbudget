@@ -18,6 +18,7 @@ import {
   computeSelectionTotals,
   customerSelectionsPdfFilename,
   groupSelectionsByCategory,
+  selectionAllowanceTotal,
 } from './customerSelections';
 
 export { customerSelectionsPdfFilename };
@@ -605,7 +606,7 @@ export async function buildCustomerSelectionsPdf(
     !item.description?.trim() || !Number.isFinite(item.qty) || item.qty <= 0 ||
     !Number.isFinite(item.allowance_per_unit) || item.allowance_per_unit < 0 ||
     !Number.isFinite(item.allowance_total) || item.allowance_total < 0 ||
-    round2(item.qty * item.allowance_per_unit) !== round2(item.allowance_total));
+    selectionAllowanceTotal(item) !== round2(item.allowance_total));
   if (invalid.length) throw new Error(`Review ${invalid.length} customer selection item(s): quantities and material allowances must be confirmed and totals must match before issuing the sheet.`);
   const checksum = computeCustomerSelectionsChecksum(estimate, items);
   const extraCodes = Array.from(

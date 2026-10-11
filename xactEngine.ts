@@ -364,6 +364,9 @@ export function normalizeEstimate(raw: unknown): { estimate: EstimateResult; war
       notes: str(input.notes) || undefined,
       ...(materialPrice(input.installed_unit_cost) !== null ? { installed_unit_cost: materialPrice(input.installed_unit_cost)! } : {}),
       ...(materialPrice(input.installed_tax_per_unit) !== null ? { installed_tax_per_unit: materialPrice(input.installed_tax_per_unit)! } : {}),
+      ...(input.source_pricing && typeof input.source_pricing === 'object' &&
+        ['qty', 'unit_cost', 'total'].every((key) => materialPrice((input.source_pricing as Record<string, unknown>)[key]) !== null)
+        ? { source_pricing: input.source_pricing as CustomerSelectionInput['source_pricing'] } : {}),
     });
   }
 
@@ -558,6 +561,7 @@ export async function processEstimate(
         ? 50_000
         : 0;
   const deadline = timeBudgetMs > 0 ? startedAt + timeBudgetMs : undefined;
+  const sourceSelections = extractXactimateSelectionSource(estimateText);
 
   // Speculative standalone selection pass: it needs nothing from the budget
   // pass, so it runs in PARALLEL and the dedicated AI read adds accuracy
@@ -565,7 +569,7 @@ export async function processEstimate(
   // result is consumed only when the budget pass omits the selection list or
   // drops a source-visible product; otherwise the in-flight call is aborted.
   const selectionRerunAbort = new AbortController();
-  const speculativeSelectionRerun = runCustomerSelectionRerun({
+  const speculativeSelectionRerun = sourceSelections !== null ? Promise.resolve(null) : runCustomerSelectionRerun({
     sourceText: estimateText,
     existing: [],
     coverageGaps: [],
@@ -601,9 +605,8 @@ export async function processEstimate(
   // Standard estimate tables provide authoritative finish scope even when the
   // model omits paint choices or substitutes a room's floor area. Their REPLACE
   // column is an installed rate, so it cannot verify a material-only allowance.
-  // Leave component reports and unfamiliar layouts on the existing AI path.
-  const hasMaterialPricing = /COMPONENT BREAKDOWN REPORT|component\s+breakdown|actual\s+cost\s+qty|material\s+(?:total|unit\s+(?:cost|price))|\b(?:description|qty|quantity).*\b(?:material|mat)\b/i.test(estimateText);
-  const sourceSelections = hasMaterialPricing ? null : extractXactimateSelectionSource(estimateText);
+  // Standard material component tables are joined here too; unfamiliar or
+  // ambiguous layouts keep the existing AI path.
   if (sourceSelections !== null) {
     rawData.customer_selections = sourceSelections;
     if (Array.isArray(rawData.material_allowances)) {
@@ -644,7 +647,7 @@ export async function processEstimate(
   }
 
   const { estimate, warnings } = normalizeEstimate(rawData);
-  if (sourceSelections !== null) warnings.push(`Verified ${sourceSelections.length} customer finish choice(s) directly against the numbered PDF estimate rows. REPLACE rates are used as installed allowances including labor; source sales tax is retained separately.`);
+  if (sourceSelections !== null) warnings.push(`Verified ${sourceSelections.length} customer finish choice(s) directly against PDF source tables. Matching material components replace installed scope rows; unmatched scope uses labeled installed allowances with source sales tax.`);
   if (selectionRerunReason === 'missing-list') {
     warnings.push(`Budget extraction omitted the customer selection list; the standalone rerun over the uploaded document(s) recovered ${estimate.customer_selection_source?.length || 0} choice(s).`);
   }

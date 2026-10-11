@@ -39,12 +39,21 @@ export const SELECTION_TAX_RATE = 0.07;
 
 const round2 = (n: number): number => Math.round((n + Number.EPSILON) * 100) / 100;
 
+/** Preserve the component report's printed total when its displayed qty is rounded. */
+export function selectionAllowanceTotal(item: Pick<CustomerSelectionItem, 'qty' | 'allowance_per_unit' | 'source_pricing'>): number {
+  const source = item.source_pricing;
+  if (source && Number.isFinite(source.total) && source.total >= 0 &&
+    Math.abs(source.qty * source.unit_cost - source.total) <= source.unit_cost * 0.005 + 0.011 &&
+    item.qty === source.qty && round2(item.allowance_per_unit) === round2(source.unit_cost)) return round2(source.total);
+  return round2(item.qty * item.allowance_per_unit);
+}
+
 // Exclude work and hidden construction supplies, rather than entire turnkey
 // trades: customers still choose their carpet, fixtures and exterior finishes.
 const NON_SELECTION_TRADE_RX =
   /demoli|mitigat|clean/i;
 const NON_SELECTION_DESCRIPTION_RX =
-  /\b(?:remove|removal|demolition|detach|reset|reinstall|clean|cleaning|protect|protection|masking|labor|labour|drywall|gypsum|insulation|lumber|studs?|joists?|subfloor|underlayment|padding|carpet pad|thinset|mortar|adhesive|caulk|sealant|primer|fasteners?|screws?|nails?|tape|poly sheeting|consumables?|supplies|rough[- ]?in|pipes?|conduit|wiring|junction box|ductwork)\b/i;
+  /\b(?:remove|removal|demolition|detach|reset|reinstall|clean|cleaning|protect|protection|masking|labor|labour|drywall|gypsum|insulation|lumber|studs?|joists?|subfloor|underlayment|padding|carpet pad|thinset|mortar|adhesive|caulk|caulking|sealant|primer|putty|sandpaper|fasteners?|screws?|nails?|tape|poly sheeting|consumables?|supplies|rough[- ]?in|pipes?|conduit|wiring|junction box|ductwork)\b/i;
 
 const TRADE_CATEGORY: ReadonlyArray<[RegExp, SelectionCategory]> = [
   [/tile/i, 'Tile'],
@@ -84,6 +93,7 @@ export function classifySelectionCategory(
   const tradeLabel = String(trade || '').trim();
   const desc = String(description || '').trim();
   if (!desc || NON_SELECTION_DESCRIPTION_RX.test(desc)) return undefined;
+  if (/\btackless\b/i.test(desc)) return undefined;
   if (/^install\b/i.test(desc) && !/\bsupply|\breplace|\breplacement|\bfurnish|R\s*&\s*R/i.test(desc)) return undefined;
   for (const [rx, category] of DESCRIPTION_CATEGORY) {
     if (rx.test(desc)) return category;
@@ -127,7 +137,11 @@ export function consolidateCustomerSelections(items: CustomerSelectionItem[]): C
       continue;
     }
     existing.qty = Math.round((existing.qty + item.qty) * 1e6) / 1e6;
-    existing.allowance_total = round2(existing.qty * existing.allowance_per_unit);
+    if (existing.source_pricing && item.source_pricing) {
+      existing.source_pricing = { ...existing.source_pricing, qty: existing.source_pricing.qty + item.source_pricing.qty,
+        total: round2(existing.source_pricing.total + item.source_pricing.total) };
+    } else existing.source_pricing = undefined;
+    existing.allowance_total = selectionAllowanceTotal(existing);
     existing.trade = [...new Set([...existing.trade.split('; '), item.trade].filter(Boolean))].join('; ');
     existing.notes = [...new Set([...(existing.notes || '').split('; '), item.notes].filter(Boolean))].join('; ') || undefined;
   }
@@ -166,7 +180,8 @@ export function buildCustomerSelections(
       id: '', category, trade: input.trade.trim(), component_code: input.component_code,
       description: input.description.trim(), qty: input.qty,
       uom: normalizedUom(input.uom),
-      allowance_per_unit: unit, allowance_total: round2(input.qty * unit),
+      allowance_per_unit: unit, allowance_total: selectionAllowanceTotal({ qty: input.qty, allowance_per_unit: unit, source_pricing: input.source_pricing }),
+      ...(input.source_pricing ? { source_pricing: input.source_pricing } : {}),
       vendor: input.vendor || audited?.vendor, notes: input.notes,
       allowance_status: confirmed ? 'confirmed' : 'needs_review', source: 'estimate',
       ...(input.installed_unit_cost !== undefined ? { installed_unit_cost: input.installed_unit_cost } : {}),
@@ -262,6 +277,7 @@ export function computeCustomerSelectionsChecksum(
       item.category,
       item.allowance_status,
       item.allowance_basis || 'material', item.installed_tax_per_unit,
+      item.source_pricing,
       item.vendor,
       item.notes,
     ]),

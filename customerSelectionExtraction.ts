@@ -63,6 +63,11 @@ Paint application rows require a color/finish selection even when no paint gallo
 Keep the exact painted SF/LF scope; never invent gallons. Room measurement summaries (SF Floor,
 SY Flooring, LF Perimeter) are geometry, not new finish choices. Install-only baseboard/casing
 does not include a new material choice unless supply or replacement material is stated.
+In a component report, only MATERIAL COMPONENTS can supply customer material pricing.
+EQUIPMENT COMPONENTS and LABOR COMPONENTS use the same column headings but are not materials.
+Painter's putty, caulking, sandpaper, carpet pad/tackless strips and seaming tape are preparation supplies.
+Join a paint material such as PNTL Latex paint to the paint application scopes; return one paint
+product in GL with all painted areas in notes, not duplicate SF/LF paint applications plus gallons.
 Do not add rough-in or hidden construction supplies (valves, wiring, drywall, adhesives, ...).
 Use exact component quantities when available, otherwise installed quantities; add no waste.
 Never count both an estimate line and its component-report equivalent: when the component report

@@ -1,0 +1,6 @@
+{
+  "status": 500,
+  "body": {
+    "error": "AI did not return the required customer selection list. Reprocess the estimate to extract all finish choices."
+  }
+}

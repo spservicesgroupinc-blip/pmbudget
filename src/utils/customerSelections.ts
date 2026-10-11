@@ -84,6 +84,7 @@ export function classifySelectionCategory(
   const tradeLabel = String(trade || '').trim();
   const desc = String(description || '').trim();
   if (!desc || NON_SELECTION_DESCRIPTION_RX.test(desc)) return undefined;
+  if (/^install\b/i.test(desc) && !/\bsupply|\breplace|\breplacement|\bfurnish|R\s*&\s*R/i.test(desc)) return undefined;
   for (const [rx, category] of DESCRIPTION_CATEGORY) {
     if (rx.test(desc)) return category;
   }
@@ -117,6 +118,7 @@ export function consolidateCustomerSelections(items: CustomerSelectionItem[]): C
       item.category, productLabel(item.description), normalized(item.component_code),
       item.uom, item.allowance_per_unit, normalized(item.vendor),
       item.allowance_status || 'confirmed', item.source,
+      item.installed_unit_cost,
     ]);
     const existing = groups.get(key);
     if (!existing) {
@@ -164,6 +166,7 @@ export function buildCustomerSelections(
       allowance_per_unit: unit, allowance_total: round2(input.qty * unit),
       vendor: input.vendor || audited?.vendor, notes: input.notes,
       allowance_status: confirmed ? 'confirmed' : 'needs_review', source: 'estimate',
+      ...(input.installed_unit_cost !== undefined ? { installed_unit_cost: input.installed_unit_cost } : {}),
     });
   };
   const seen = new Set<string>();

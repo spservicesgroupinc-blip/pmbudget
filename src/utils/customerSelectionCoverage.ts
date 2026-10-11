@@ -1,4 +1,5 @@
 import type { CustomerSelectionInput } from '../types/estimate.js';
+import { readXactimateSelectionRows, isSelectableXactimateRow } from './xactimateSelectionSource.js';
 
 // Concrete products with visible quantities are evidence for a coverage check.
 // The follow-up AI pass still verifies replacement scope, exclusions and pricing.
@@ -38,9 +39,15 @@ export function findCustomerSelectionCoverageGaps(
   source: string,
   selections: CustomerSelectionInput[]
 ): string[] {
-  const lines = source.split(/\r?\n/).filter((line) => {
+  const tableRows = readXactimateSelectionRows(source);
+  const sourceLines = tableRows === null ? source.split(/\r?\n/) :
+    tableRows.filter(isSelectableXactimateRow).map((row) => row.line);
+  const lines = sourceLines.filter((line) => {
     if (!/\b\d[\d,.]*\s*(?:SF|LF|EA|SY|GL|GAL|EACH|SQ\.?\s*FT)\b/i.test(line)) return false;
     if (/\b(?:credit|credited|omitted|excluded|exclude|do not perform)\b/i.test(line)) return false;
+    if (/\b(?:existing|labor only|labour only|carpet pad|padding|underlayment)\b/i.test(line)) return false;
+    if (/\binstall\b/i.test(line) && !/\bsupply|\breplace|\breplacement|\bfurnish|R\s*&\s*R/i.test(line)) return false;
+    if (/^[\d,.]+\s+(?:SF|LF|SY)\s+(?:Floor(?:ing)?|Walls?|Ceiling|(?:Floor|Ceil\.) Perimeter)\b/i.test(line)) return false;
     if (/\b(?:remove|removal|detach|reset|reinstall|cleaning)\b/i.test(line) &&
         !/\b(?:replace|replacement|R\s*&\s*R)\b/i.test(line)) return false;
     // Rough-in, supply and hidden construction lines are not customer-facing

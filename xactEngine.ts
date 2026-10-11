@@ -15,6 +15,7 @@ import { findCustomerSelectionCoverageGaps } from './src/utils/customerSelection
 import { recoverCustomerSelectionPrices } from './customerSelectionPricing.js';
 import { runCustomerSelectionRerun } from './customerSelectionExtraction.js';
 import { mineEstimateDollars } from './estimateTextMiner.js';
+import { extractXactimateSelectionSource } from './xactSelectionSource.js';
 import { SOURCE_DOCUMENTS_GUIDE } from './src/utils/sourceDocuments.js';
 import type { MinedEstimate } from './estimateTextMiner.js';
 import type {
@@ -24,7 +25,7 @@ import type {
   TradeSection,
 } from './src/types/estimate.js';
 
-export const ESTIMATE_ENGINE_VERSION = 'budget-engine-v5-selection-rerun';
+export const ESTIMATE_ENGINE_VERSION = 'budget-engine-v6-source-selections';
 
 const DIVISION_TABLE = `- Demolition & Hauling | DEM, DMO, WTR | In-House Self-Perform | direct labor = 72% of retail labor; consumables only
 - Framing & Rough Carpentry | FRM | In-House Self-Perform | direct labor = 72%
@@ -116,6 +117,10 @@ document, its trade is turnkey or its material price is absent. Do not impose a 
 - trade matches the owning trade_name; suggested vendor may be omitted if unknown.
 - Before returning, check every source room/category in BOTH documents against this list for
   omitted choices. Return [] only when the source contains no customer-selectable replacement finishes.
+- Paint application rows still require a color/finish choice: retain the painted SF/LF scope
+  when no paint gallon quantity is stated. Do not invent gallons or material-only prices.
+- Room measurements (SF Floor, SY Flooring, LF Perimeter) describe geometry, not replacement scope.
+  "Install Baseboard"/"Install Casing" are installation-only; exclude them unless supply is stated.
 
 4) MATERIAL ALLOWANCE ITEMS (procurement list, Output 2)
 Itemize direct materials trades must procure. Rules:
@@ -357,6 +362,7 @@ export function normalizeEstimate(raw: unknown): { estimate: EstimateResult; war
       allowance_per_unit: unit !== null && Number.isFinite(unit) && unit >= 0 ? unit : null,
       vendor: str(input.vendor) || undefined,
       notes: str(input.notes) || undefined,
+      ...(materialPrice(input.installed_unit_cost) !== null ? { installed_unit_cost: materialPrice(input.installed_unit_cost)! } : {}),
     });
   }
 
@@ -591,19 +597,35 @@ export async function processEstimate(
   }
   const rawData = data as Record<string, unknown>;
 
+  // Standard estimate tables provide authoritative finish scope even when the
+  // model omits paint choices or substitutes a room's floor area. Their REPLACE
+  // column is an installed rate, so it cannot verify a material-only allowance.
+  // Leave component reports and unfamiliar layouts on the existing AI path.
+  const hasMaterialPricing = /COMPONENT BREAKDOWN REPORT|component\s+breakdown|actual\s+cost\s+qty|material\s+(?:total|unit\s+(?:cost|price))|\b(?:description|qty|quantity).*\b(?:material|mat)\b/i.test(estimateText);
+  const sourceSelections = hasMaterialPricing ? null : extractXactimateSelectionSource(estimateText);
+  if (sourceSelections !== null) {
+    rawData.customer_selections = sourceSelections;
+    if (Array.isArray(rawData.material_allowances)) {
+      rawData.material_allowances = rawData.material_allowances.filter((raw) => {
+        const row = raw as Record<string, unknown> | null;
+        return !row || !classifySelectionCategory(str(row.trade), str(row.description));
+      });
+    }
+  }
+
   // The standalone selection pass ran in PARALLEL with the budget pass (see
   // above). Consume it when the budget pass omitted the list or dropped a
   // source-visible product; otherwise abort the speculative work so a
   // complete extraction is not followed by a second full AI read.
   let selectionRerunTokens = 0;
   let selectionRerunReason = '';
-  const mainHasSelections = Array.isArray(rawData.customer_selections) && rawData.customer_selections.length > 0;
+  const mainHasSelections = Array.isArray(rawData.customer_selections);
   const mainGaps = mainHasSelections
     ? findCustomerSelectionCoverageGaps(estimateText, normalizeEstimate(rawData).estimate.customer_selection_source || [])
     : [];
   if (!mainHasSelections || mainGaps.length) {
     const rerun = await speculativeSelectionRerun;
-    if (!rerun || !Array.isArray(rerun.rows) || rerun.rows.length === 0) {
+    if (!rerun || !Array.isArray(rerun.rows)) {
       selectionRerunAbort.abort();
       throw new Error(
         mainHasSelections
@@ -621,6 +643,7 @@ export async function processEstimate(
   }
 
   const { estimate, warnings } = normalizeEstimate(rawData);
+  if (sourceSelections !== null) warnings.push(`Verified ${sourceSelections.length} customer finish choice(s) directly against the numbered PDF estimate rows. Installed REPLACE rates are retained as references; material-only prices are not stated in this table.`);
   if (selectionRerunReason === 'missing-list') {
     warnings.push(`Budget extraction omitted the customer selection list; the standalone rerun over the uploaded document(s) recovered ${estimate.customer_selection_source?.length || 0} choice(s).`);
   }
@@ -666,7 +689,7 @@ export async function processEstimate(
     const matched = buildCustomerSelections(estimate.material_allowances, [input])[0];
     return matched?.allowance_status === 'confirmed' ? { ...input, allowance_per_unit: matched.allowance_per_unit } : input;
   });
-  const pricingReviewNeeded = estimate.customer_selection_source.some((item) => item.allowance_per_unit === null);
+  const pricingReviewNeeded = sourceSelections === null && estimate.customer_selection_source.some((item) => item.allowance_per_unit === null);
   if (pricingReviewNeeded) {
     // Pricing recovery is a second serial AI pass; only start it while enough
     // of the request budget remains, and degrade to the unpriced-selection

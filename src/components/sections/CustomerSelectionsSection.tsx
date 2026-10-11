@@ -264,7 +264,7 @@ export const CustomerSelectionsSection: React.FC<CustomerSelectionsSectionProps>
         )}
         <span>
           {unpricedCount > 0
-            ? `${unpricedCount} selection item(s) have no verified material-only price. Reprocess with the component breakdown to extract these amounts, or confirm the allowance in $/Unit.`
+            ? `${unpricedCount} selection item(s) need a material allowance. The estimate's installed prices include labor; they are shown as references where available. Upload a Component Breakdown Report or enter the material allowance in $/Unit. Rebuild uses the existing extracted data.`
             : items.length > 0
             ? `Customer selections ready — review and adjust the ${items.length} allowance item(s), then generate the allowance sheet.`
             : 'No customer selections yet — upload the estimate with its optional Component Breakdown Report to populate selection allowances automatically, or add items manually.'}
@@ -356,6 +356,7 @@ export const CustomerSelectionsSection: React.FC<CustomerSelectionsSectionProps>
                   0
                 )
               );
+              const missingPrices = group.items.filter((item) => item.allowance_status === 'needs_review').length;
               return (
                 <div key={group.category}>
                   <div className="px-5 py-2.5 bg-slate-50/80 border-b border-slate-100 flex items-center justify-between">
@@ -366,7 +367,7 @@ export const CustomerSelectionsSection: React.FC<CustomerSelectionsSectionProps>
                       </span>
                     </span>
                     <span className="text-[12px] font-semibold text-red-600 tabular-nums">
-                      {formatMoney(groupTotal)}
+                      {missingPrices === group.items.length ? 'Awaiting material prices' : `${formatMoney(groupTotal)}${missingPrices ? ' · partial' : ''}`}
                     </span>
                   </div>
                   {group.items.map((item) => (
@@ -404,6 +405,12 @@ export const CustomerSelectionsSection: React.FC<CustomerSelectionsSectionProps>
                             }}
                             className={`${inputClass} mt-1.5 text-[11px] text-slate-500`}
                           />
+                          {item.installed_unit_cost !== undefined && (
+                            <p className="mt-1.5 text-[11px] text-slate-500">
+                              Estimate reference: {formatMoney(item.installed_unit_cost)}/{item.uom} including installation
+                              {' · '}{formatMoney(round2(item.qty * item.installed_unit_cost))} before tax and O&amp;P.
+                            </p>
+                          )}
                         </div>
 
                         {/* Category */}

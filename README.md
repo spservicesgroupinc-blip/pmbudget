@@ -101,6 +101,14 @@ quantities" rule drives the material allowance roll-up.
   a `SEL-CHK-` verification token.
   Full descriptions and room notes continue across pages with repeated category/table headers.
   Reprocess older estimates to recover finish choices omitted by the previous extraction.
+  For standard numbered `DESCRIPTION / QTY / REMOVE / REPLACE / TAX / O&P / TOTAL` tables,
+  finish scope is verified directly against the PDF rows. Paint application keeps its stated
+  SF/LF quantities and color choices; room dimensions, existing carpet work, carpet pad and
+  install-only trim never become replacement selections. An empty selection list is valid
+  when the source has no selectable finishes. Unsupported layouts retain the AI extraction path.
+  `REPLACE` rates are kept as labeled installed-price references, independently of material
+  allowances. They cannot establish material-only costs. Rebuild uses stored extraction;
+  upload/reprocess with a component report or confirm missing material allowances to issue a sheet.
   Token-limited responses retry rather than accepting partial selection lists. Oversized source
   documents and unreadable component reports return actionable errors instead of dropping content.
   A source product coverage check (flooring, cabinets, paint, trim, appliances, fixtures, ...)

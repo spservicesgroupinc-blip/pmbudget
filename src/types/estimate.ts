@@ -124,6 +124,8 @@ export interface CustomerSelectionItem {
   allowance_per_unit: number;
   /** qty x allowance_per_unit, rounded to cents. */
   allowance_total: number;
+  /** Source REPLACE rate including installation; never a material-only price. */
+  installed_unit_cost?: number;
   vendor?: string;
   notes?: string;
   /** Unknown material-only pricing must be confirmed before issuing the sheet. */
@@ -139,6 +141,8 @@ export interface CustomerSelectionInput {
   qty: number;
   uom: string;
   allowance_per_unit: number | null;
+  /** Source REPLACE rate including installation, retained for office review. */
+  installed_unit_cost?: number;
   vendor?: string;
   notes?: string;
 }

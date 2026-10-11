@@ -13,6 +13,8 @@ import {
   AlertCircle,
   Pin,
   Trash2,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react';
 import { ConfirmModal } from '../ConfirmModal';
 import { EstimateResult, ScheduledTask, TradeSection } from '../../types/estimate';
@@ -82,8 +84,14 @@ export const GanttScheduleSection: React.FC<GanttScheduleSectionProps> = ({
   const [confirmRemoveTaskId, setConfirmRemoveTaskId] = useState<string | null>(
     null
   );
+  // Expanded timeline: the chart panel itself fills the viewport. This is a CSS
+  // overlay rather than the Fullscreen API on purpose — a native fullscreen
+  // element renders only its own subtree, which would hide the task details
+  // modal when a bar is clicked for editing.
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const ganttRef = useRef<Gantt | null>(null);
   const ganttTasksRef = useRef<GanttTask[]>([]);
   const rafRef = useRef<number | null>(null);
@@ -458,6 +466,26 @@ export const GanttScheduleSection: React.FC<GanttScheduleSectionProps> = ({
     });
   }, [scheduleData]);
 
+  // Expanded-timeline housekeeping: lock page scroll behind the overlay and
+  // let Escape collapse it. While a dialog is open, Escape belongs to the
+  // dialog (TaskDetailsModal already listens on window), so leave it alone.
+  useEffect(() => {
+    if (!isFullscreen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+      event.preventDefault();
+      setIsFullscreen(false);
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [isFullscreen]);
+
   const detailsTask = detailsTaskId
     ? (scheduleData?.tasks.find((t) => t.task_id === detailsTaskId) ?? null)
     : null;
@@ -485,10 +513,82 @@ export const GanttScheduleSection: React.FC<GanttScheduleSectionProps> = ({
     ? (scheduleData?.tasks.find((t) => t.task_id === confirmRemoveTaskId) ?? null)
     : null;
 
+  // Rendered in both the page toolbar and the expanded-timeline toolbar, so
+  // scale and critical-path highlighting stay reachable while expanded.
+  const renderViewScale = () => (
+    <div
+      role="group"
+      aria-label="Timeline scale"
+      className="inline-flex h-9 items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5"
+    >
+      {(['Day', 'Week', 'Month'] as const).map((mode) => (
+        <button
+          key={mode}
+          type="button"
+          aria-pressed={viewMode === mode}
+          onClick={() => setViewMode(mode)}
+          className={`h-8 px-2.5 rounded-md text-[12px] font-semibold transition-colors ${
+            viewMode === mode
+              ? 'bg-white text-slate-900 shadow-xs border border-slate-200'
+              : 'text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          {mode}
+        </button>
+      ))}
+    </div>
+  );
+
+  const renderCriticalPathToggle = () => (
+    <button
+      type="button"
+      aria-pressed={highlightCriticalPath}
+      onClick={() => setHighlightCriticalPath(!highlightCriticalPath)}
+      className={`inline-flex items-center gap-1.5 h-9 px-3 rounded-lg text-[12px] font-semibold border transition-colors ${
+        highlightCriticalPath
+          ? 'border-red-300 bg-red-50 text-red-700'
+          : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+      }`}
+    >
+      <Flame className="w-3.5 h-3.5" />
+      <span>Critical Path ({criticalPathTaskIds.size} Tasks)</span>
+    </button>
+  );
+
+  const renderFullscreenToggle = () => (
+    <button
+      type="button"
+      aria-pressed={isFullscreen}
+      aria-label={
+        isFullscreen
+          ? 'Exit full screen timeline'
+          : 'View and edit the timeline full screen'
+      }
+      title={
+        isFullscreen
+          ? 'Exit full screen (Esc)'
+          : 'Full screen — view and edit the timeline across the whole window'
+      }
+      onClick={() => setIsFullscreen((value) => !value)}
+      className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg text-[12px] font-semibold border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 transition-colors"
+    >
+      {isFullscreen ? (
+        <Minimize2 className="w-3.5 h-3.5" />
+      ) : (
+        <Maximize2 className="w-3.5 h-3.5" />
+      )}
+      <span>{isFullscreen ? 'Exit full screen' : 'Full screen'}</span>
+    </button>
+  );
+
   return (
     <div className="space-y-6">
-      {/* Top Schedule Controls & Metrics */}
-      <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-none">
+      {/* Top Schedule Controls & Metrics (hidden while the timeline is expanded) */}
+      <div
+        className={`bg-white rounded-xl border border-slate-200 p-5 shadow-none ${
+          isFullscreen ? 'hidden' : ''
+        }`}
+      >
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <div className="flex items-center gap-2">
@@ -520,41 +620,11 @@ export const GanttScheduleSection: React.FC<GanttScheduleSectionProps> = ({
             </div>
 
             {/* View mode selector */}
-            <div
-              role="group"
-              aria-label="Timeline scale"
-              className="inline-flex h-9 items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5"
-            >
-              {(['Day', 'Week', 'Month'] as const).map((mode) => (
-                <button
-                  key={mode}
-                  type="button"
-                  aria-pressed={viewMode === mode}
-                  onClick={() => setViewMode(mode)}
-                  className={`h-8 px-2.5 rounded-md text-[12px] font-semibold transition-colors ${
-                    viewMode === mode
-                      ? 'bg-white text-slate-900 shadow-xs border border-slate-200'
-                      : 'text-slate-500 hover:text-slate-800'
-                  }`}
-                >
-                  {mode}
-                </button>
-              ))}
-            </div>
+            {renderViewScale()}
 
-            <button
-              type="button"
-              aria-pressed={highlightCriticalPath}
-              onClick={() => setHighlightCriticalPath(!highlightCriticalPath)}
-              className={`inline-flex items-center gap-1.5 h-9 px-3 rounded-lg text-[12px] font-semibold border transition-colors ${
-                highlightCriticalPath
-                  ? 'border-red-300 bg-red-50 text-red-700'
-                  : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
-              }`}
-            >
-              <Flame className="w-3.5 h-3.5" />
-              <span>Critical Path ({criticalPathTaskIds.size} Tasks)</span>
-            </button>
+            {renderCriticalPathToggle()}
+
+            {renderFullscreenToggle()}
           </div>
         </div>
 
@@ -598,9 +668,18 @@ export const GanttScheduleSection: React.FC<GanttScheduleSectionProps> = ({
         </div>
       </div>
 
-      {/* Interactive Gantt Chart Panel */}
-      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-none">
-        <div className="px-5 py-3 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
+      {/* Interactive Gantt Chart Panel. Expanded, this panel becomes a
+          viewport-filling overlay: same DOM node, so the chart is never
+          rebuilt and dragging/clicking keeps working. */}
+      <div
+        ref={panelRef}
+        className={`bg-white border-slate-200 shadow-none ${
+          isFullscreen
+            ? 'fixed inset-0 z-50 flex flex-col rounded-none border-0'
+            : 'rounded-xl border overflow-hidden'
+        }`}
+      >
+        <div className="px-5 py-3 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3 shrink-0">
           <div className="flex items-center gap-2 text-[12px] text-slate-600">
             <span className="font-semibold text-slate-900">Timeline:</span>
             <span>
@@ -609,24 +688,33 @@ export const GanttScheduleSection: React.FC<GanttScheduleSectionProps> = ({
             </span>
           </div>
 
-          <div className="flex items-center gap-4 text-[11px] text-slate-500">
-            <span className="flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded bg-red-600" />
-              <span>Critical Path</span>
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded bg-slate-700" />
-              <span>Standard Trade</span>
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded bg-slate-100 border border-slate-200" />
-              <span>Weekend</span>
-            </span>
+          <div className="flex flex-wrap items-center gap-3">
+            {isFullscreen && (
+              <>
+                {renderViewScale()}
+                {renderCriticalPathToggle()}
+                {renderFullscreenToggle()}
+              </>
+            )}
+            <div className="flex items-center gap-4 text-[11px] text-slate-500">
+              <span className="flex items-center gap-1.5">
+                <span className="w-3 h-3 rounded bg-red-600" />
+                <span>Critical Path</span>
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-3 h-3 rounded bg-slate-700" />
+                <span>Standard Trade</span>
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-3 h-3 rounded bg-slate-100 border border-slate-200" />
+                <span>Weekend</span>
+              </span>
+            </div>
           </div>
         </div>
 
         {renderError && (
-          <div className="px-5 py-3 bg-amber-50 border-b border-amber-200 flex items-start gap-2 text-[12px] text-amber-800">
+          <div className="px-5 py-3 bg-amber-50 border-b border-amber-200 flex items-start gap-2 text-[12px] text-amber-800 shrink-0">
             <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
             <span>
               The interactive timeline could not be rendered ({renderError}). The
@@ -635,7 +723,11 @@ export const GanttScheduleSection: React.FC<GanttScheduleSectionProps> = ({
           </div>
         )}
 
-        <div className="p-3">
+        <div
+          className={
+            isFullscreen ? 'flex-1 min-h-0 overflow-auto p-3' : 'p-3'
+          }
+        >
           {/* frappe-gantt builds its own DOM inside this node. */}
           <div
             ref={containerRef}
@@ -645,7 +737,7 @@ export const GanttScheduleSection: React.FC<GanttScheduleSectionProps> = ({
         </div>
 
         {/* Footer with Sync CTA */}
-        <div className="px-5 py-3.5 border-t border-slate-100 bg-slate-50 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-[12px]">
+        <div className="px-5 py-3.5 border-t border-slate-100 bg-slate-50 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-[12px] shrink-0">
           <div className="text-slate-500 flex items-start gap-1.5">
             <Link2 className="w-3.5 h-3.5 mt-0.5 shrink-0" />
             <span>
@@ -775,7 +867,7 @@ export const GanttScheduleSection: React.FC<GanttScheduleSectionProps> = ({
       {detailsTask && (
         <TaskDetailsModal
           task={detailsTask}
-          allTaskIds={tasks.map((t) => t.task_id)}
+          allTasks={tasks}
           onClose={() => setDetailsTaskId(null)}
           onUpdateTrade={onUpdateTrade}
           onRemoveTrade={(taskId) => {

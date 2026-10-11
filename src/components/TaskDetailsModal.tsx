@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ArrowRight,
   Flame,
@@ -10,16 +10,25 @@ import {
   X,
 } from 'lucide-react';
 import { ConfirmModal } from './ConfirmModal';
+import { PredecessorPicker } from './PredecessorPicker';
 import { ScheduledTask, TradeSection } from '../types/estimate';
 import {
   addWorkdays,
   formatDateYMD,
   parseDateYMD,
 } from '../utils/scheduler';
+import {
+  buildPredecessorOptions,
+  describePredecessors,
+  formatPredecessors,
+  parsePredecessors,
+  wouldCreateCycle,
+} from '../utils/predecessors';
 
 interface TaskDetailsModalProps {
   task: ScheduledTask;
-  allTaskIds: string[];
+  /** Every task on the schedule, used to populate the predecessor dropdown. */
+  allTasks: ScheduledTask[];
   onClose: () => void;
   onUpdateTrade: (taskId: string, updated: Partial<TradeSection>) => void;
   onRemoveTrade: (taskId: string) => void;
@@ -51,13 +60,14 @@ const DetailRow: React.FC<{ label: string; children: React.ReactNode }> = ({
 );
 
 /**
- * Editable task details, opened by clicking a Gantt bar. Workdays,
- * predecessors, and the manual start override can be adjusted here, and the
- * task can be removed from the schedule entirely.
+ * Editable task details, opened by clicking a Gantt bar. Workdays, the linked
+ * predecessor trades (chosen from a dropdown of everything else on the
+ * schedule) and the manual start override can be adjusted here, and the task
+ * can be removed from the schedule entirely.
  */
 export const TaskDetailsModal: React.FC<TaskDetailsModalProps> = ({
   task,
-  allTaskIds,
+  allTasks,
   onClose,
   onUpdateTrade,
   onRemoveTrade,
@@ -99,6 +109,24 @@ export const TaskDetailsModal: React.FC<TaskDetailsModalProps> = ({
   const wasClamped =
     isPinned && task.schedule_start_override !== task.startDate;
 
+  const scheduleIds = useMemo(
+    () => new Set(allTasks.map((t) => t.task_id)),
+    [allTasks]
+  );
+  const selectedPreds = useMemo(() => parsePredecessors(preds), [preds]);
+  const linkedPreds = useMemo(
+    () => selectedPreds.filter((id) => id !== task.task_id && scheduleIds.has(id)),
+    [selectedPreds, scheduleIds, task.task_id]
+  );
+  const offSchedulePreds = useMemo(
+    () => selectedPreds.filter((id) => !scheduleIds.has(id)),
+    [selectedPreds, scheduleIds]
+  );
+  const predecessorOptions = useMemo(
+    () => buildPredecessorOptions(allTasks, task.task_id, linkedPreds),
+    [allTasks, task.task_id, linkedPreds]
+  );
+
   const effStart = startOverride.trim() || task.startDate;
   const previewDays = Number(days.trim());
   const finishPreview =
@@ -114,24 +142,23 @@ export const TaskDetailsModal: React.FC<TaskDetailsModalProps> = ({
       setError('Workdays must be a whole number between 1 and 365.');
       return;
     }
-    const tokens = preds
-      .split(',')
-      .map((p) => p.trim())
-      .filter(Boolean);
+    const tokens = parsePredecessors(preds);
     if (tokens.includes(task.task_id)) {
       setError('A task cannot depend on itself.');
       return;
     }
-    const unknown = tokens.filter((p) => !allTaskIds.includes(p));
-    if (unknown.length > 0) {
+    const valid = tokens.filter((p) => scheduleIds.has(p));
+    // The scheduler falls back to a 1-day stub on a loop and the budget engine
+    // would silently break it, so refuse the save and name the offending link.
+    const loop = valid.find((p) => wouldCreateCycle(allTasks, task.task_id, p));
+    if (loop) {
       setError(
-        `Unknown predecessor${unknown.length === 1 ? '' : 's'}: ${unknown.join(
-          ', '
-        )} — use existing task IDs.`
+        `${loop} already depends on ${task.task_id}, directly or through other trades — linking it would create a circular dependency. Unlink one side of the loop first.`
       );
       return;
     }
-    const normalizedPreds = tokens.join(', ');
+    const dropped = tokens.filter((p) => !scheduleIds.has(p));
+    const normalizedPreds = formatPredecessors(valid);
     const patch: Partial<TradeSection> = {};
     if (parsedDays !== task.suggested_duration_days) {
       patch.suggested_duration_days = parsedDays;
@@ -150,7 +177,16 @@ export const TaskDetailsModal: React.FC<TaskDetailsModalProps> = ({
     }
     setError(null);
     onUpdateTrade(task.task_id, patch);
-    onShowToast('success', `Saved ${task.task_id} — schedule re-sequenced.`);
+    if (dropped.length > 0) {
+      onShowToast(
+        'warning',
+        `Saved ${task.task_id} — dropped ${dropped.join(
+          ', '
+        )} (no longer on this schedule).`
+      );
+    } else {
+      onShowToast('success', `Saved ${task.task_id} — schedule re-sequenced.`);
+    }
   };
 
   return (
@@ -234,19 +270,7 @@ export const TaskDetailsModal: React.FC<TaskDetailsModalProps> = ({
             </label>
             <label>
               <span className="block text-[11px] font-semibold uppercase text-slate-400">
-                Predecessors
-              </span>
-              <input
-                type="text"
-                value={preds}
-                onChange={(e) => setPreds(e.target.value)}
-                placeholder="None — e.g. T-1, T-2"
-                className="mt-1 w-full h-9 px-3 rounded-lg border border-slate-300 bg-white text-[13px] text-slate-900 focus:outline-none focus:ring-2 focus:ring-red-200"
-              />
-            </label>
-            <label className="col-span-2">
-              <span className="block text-[11px] font-semibold uppercase text-slate-400">
-                Manual start override (optional)
+                Manual start override
               </span>
               <input
                 type="date"
@@ -254,12 +278,27 @@ export const TaskDetailsModal: React.FC<TaskDetailsModalProps> = ({
                 onChange={(e) => setStartOverride(e.target.value)}
                 className="mt-1 w-full h-9 px-3 rounded-lg border border-slate-300 bg-white text-[13px] text-slate-900 focus:outline-none focus:ring-2 focus:ring-red-200"
               />
+            </label>
+            <div className="col-span-2">
+              <span className="block text-[11px] font-semibold uppercase text-slate-400">
+                Predecessors
+              </span>
+              <PredecessorPicker
+                taskId={task.task_id}
+                selectedIds={linkedPreds}
+                offScheduleIds={offSchedulePreds}
+                options={predecessorOptions}
+                summary={describePredecessors(linkedPreds, allTasks)}
+                onChange={(next) => setPreds(formatPredecessors(next))}
+              />
               <p className="mt-1.5 text-[11px] text-slate-500 leading-normal">
-                Leave empty to let the scheduler auto-sequence. The scheduler
-                never starts before the project start or before predecessors
+                Pick the trades this package follows. Linking waits for the
+                selected trade to finish; unlink to let it start earlier. Leave
+                the override empty to let the scheduler auto-sequence — it never
+                starts before the project start or before linked predecessors
                 finish.
               </p>
-            </label>
+            </div>
           </div>
 
           {error && (

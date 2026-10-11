@@ -59,6 +59,10 @@ product, copying their text exactly so duplicates are never created. Return the 
 corrected list, not only the missing products.
 Exclude removal-only, detach/reset/reinstall, credited, omitted, cleaning and labor-only work.
 Include replacement material even if its line also includes installation labor.
+Paint application rows require a color/finish selection even when no paint gallons are listed.
+Keep the exact painted SF/LF scope; never invent gallons. Room measurement summaries (SF Floor,
+SY Flooring, LF Perimeter) are geometry, not new finish choices. Install-only baseboard/casing
+does not include a new material choice unless supply or replacement material is stated.
 Do not add rough-in or hidden construction supplies (valves, wiring, drywall, adhesives, ...).
 Use exact component quantities when available, otherwise installed quantities; add no waste.
 Never count both an estimate line and its component-report equivalent: when the component report

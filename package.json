@@ -19,6 +19,7 @@
     "verify:selections": "tsx scripts/verify-customer-selections.ts",
     "verify:predecessors": "tsx scripts/verify-predecessor-picker.tsx",
     "verify:pdf-extract": "tsx scripts/verify-pdf-extract.ts",
+    "verify:selection-source": "tsx scripts/verify-estimate-selection-source.ts",
     "icons": "node scripts/generate-icons.mjs"
   },
   "dependencies": {

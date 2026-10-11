@@ -96,6 +96,9 @@ export const JsonExportSection: React.FC<JsonExportSectionProps> = ({
     ...(estimate.customer_selections && estimate.customer_selections.length > 0
       ? { customer_selections: estimate.customer_selections }
       : {}),
+    ...(estimate.customer_selection_source && estimate.customer_selection_source.length > 0
+      ? { customer_selection_source: estimate.customer_selection_source }
+      : {}),
     ...(estimate.work_orders && estimate.work_orders.length > 0
       ? { work_orders: estimate.work_orders }
       : {}),

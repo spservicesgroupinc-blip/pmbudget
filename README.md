@@ -80,18 +80,27 @@ estimate. Both are merged into one extraction pass (the component report is appe
 marker header), so the engine's "exact component quantities" rule drives the material allowance
 roll-up.
 
-- `xactEngine.processEstimate` derives `customer_selections` from the final `material_allowances`
-  via the deterministic classifier in `src/utils/customerSelections.ts` (Flooring, Tile,
-  Cabinets & Countertops, Paint & Finishes, Trim & Doors, Plumbing Fixtures, Hardware, Appliances).
+- `xactEngine.processEstimate` explicitly extracts all customer finish choices, including
+  subcontractor-supplied carpet, plumbing, lighting and exterior finishes. The original rows
+  are retained in `customer_selection_source` for rebuilds and JSON exports. The classifier
+  in `src/utils/customerSelections.ts` groups by the product before the owning trade, combines
+  matching products/rates across rooms, and fills gaps from audited `material_allowances`.
+  Source selection quantities carry no extra waste; matching audited material rates are reused.
+  Unknown material-only prices require office review before the PDF can be issued.
   Selection rows live separately from the procurement list, so customer-facing edits never touch
   the budget engine or its audit checksums.
 - **Customer Selections section**: review/edit rows (description, category, qty, uom, $/unit,
-  vendor, notes), add or remove items, rebuild from the extracted allowances, and generate the
+  vendor, notes), add or remove items, rebuild from the extracted choices and allowances, and generate the
   branded **Customer Selections & Material Allowance Sheet** (`src/utils/customerSelectionsPdf.ts`).
   The sheet is a deliberate customer-facing money document (allowance figures rendered via
   `formatMoney`) — carrier RCV, O&P and margins never appear; the verify script allow-lists every
   dollar token. Filenames look like `Client_Claim_1234_Customer_Selections.pdf`; every page carries
   a `SEL-CHK-` verification token.
+  Full descriptions and room notes continue across pages with repeated category/table headers.
+  Reprocess older estimates to recover finish choices omitted by the previous extraction.
+  Token-limited responses retry rather than accepting partial selection lists. Oversized source
+  documents and unreadable component reports return actionable errors instead of dropping content.
+  Run `npm run verify:selections` for offline checks, or append `-- --live` to verify a real AI call.
 
 ## HTTP API
 

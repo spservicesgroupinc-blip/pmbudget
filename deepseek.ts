@@ -32,6 +32,8 @@ export interface DeepSeekJsonOptions {
   timeoutMs?: number;
   attempts?: number;
   label?: string;
+  /** Reject token-limited responses rather than treating repaired partial JSON as complete. */
+  requireComplete?: boolean;
 }
 
 interface ChatMessage {
@@ -229,6 +231,11 @@ export async function deepseekJsonWithMeta<T>(
         timeoutMs,
         label,
       });
+      if (result.finishReason === 'length' && options.requireComplete) {
+        compact = true;
+        lastError = new Error('AI output reached the token limit before all items were returned. Use a smaller estimate or increase DEEPSEEK_MAX_TOKENS for a model that supports it.');
+        continue;
+      }
 
       let parsed = parseJsonLoose(result.text);
       let repaired = false;

@@ -49,7 +49,7 @@ const {
 const COL_DESC_X = MARGIN;
 const COL_DESC_W = 196;
 const COL_QTY_X = 258;
-const COL_QTY_W = 50;
+const COL_QTY_W = 42; // 8pt gutter before the unit column
 const COL_UOM_X = 308;
 const COL_UOM_W = 40;
 const COL_UNIT_X = 348;
@@ -114,6 +114,18 @@ class SelectionsPacket {
     const lines: string[] = [];
     let current = '';
     for (const word of words) {
+      if (font.widthOfTextAtSize(word, size) > maxWidth) {
+        if (current) lines.push(current);
+        current = '';
+        for (const char of word) {
+          if (current && font.widthOfTextAtSize(current + char, size) > maxWidth) {
+            lines.push(current);
+            current = '';
+          }
+          current += char;
+        }
+        continue;
+      }
       const candidate = current ? `${current} ${word}` : word;
       if (!current || font.widthOfTextAtSize(candidate, size) <= maxWidth) {
         current = candidate;
@@ -133,36 +145,6 @@ class SelectionsPacket {
   /** Static, office-controlled copy: sanitize only, never redaction. */
   private wrapStatic(text: string, font: PDFFont, size: number, maxWidth: number): string[] {
     return this.wrapToWidth(sanitize(text), font, size, maxWidth);
-  }
-
-  /** Caps a wrapped block at two lines with a trailing ellipsis when longer. */
-  private capTwo(lines: string[], font: PDFFont, size: number, maxWidth: number): string[] {
-    if (lines.length <= 2) return lines;
-    const words = lines.join(' ').split(/\s+/).filter(Boolean);
-    const out: string[] = [];
-    let current = '';
-    for (const word of words) {
-      const candidate = current ? `${current} ${word}` : word;
-      if (!current || font.widthOfTextAtSize(candidate, size) <= maxWidth) {
-        current = candidate;
-      } else {
-        out.push(current);
-        current = word;
-        if (out.length === 2) break;
-      }
-    }
-    if (out.length < 2 && current) out.push(current);
-    if (out.length >= 2) {
-      let last = out[1];
-      while (
-        last.length > 1 &&
-        font.widthOfTextAtSize(`${last} ...`, size) > maxWidth
-      ) {
-        last = last.replace(/\s+\S*$/, '');
-      }
-      out[1] = `${last} ...`;
-    }
-    return out;
   }
 
   private ensure(needed: number) {
@@ -324,23 +306,23 @@ class SelectionsPacket {
     const labelX2 = MARGIN + 262;
     const valueX2 = labelX2 + 92;
     const valueMaxW = 150;
-    rows.forEach(([label, value], i) => {
-      const leftColumn = i < 3;
-      const labelX = leftColumn ? MARGIN : labelX2;
-      const valueX = leftColumn ? MARGIN + 92 : valueX2;
-      const y = this.y - i % 3 * 16;
-      this.page.drawText(label, { x: labelX, y, font: this.bold, size: 8, color: SLATE_400 });
-      const lines = this.capTwo(
-        this.wrapClean(value, this.reg, 9.5, valueMaxW),
-        this.reg,
-        9.5,
-        valueMaxW
-      );
-      lines.forEach((line, li) => {
-        this.page.drawText(line, { x: valueX, y: y - li * 11.5, font: this.reg, size: 9.5, color: SLATE_700 });
+    for (let row = 0; row < 3; row++) {
+      const cells = [rows[row], rows[row + 3]].map(([label, value]) => ({
+        label, lines: this.wrapClean(value, this.reg, 9.5, valueMaxW),
+      }));
+      const height = Math.max(16, Math.max(...cells.map((cell) => cell.lines.length)) * 11.5 + 4);
+      this.ensure(height);
+      cells.forEach((cell, column) => {
+        const labelX = column === 0 ? MARGIN : labelX2;
+        const valueX = column === 0 ? MARGIN + 92 : valueX2;
+        this.page.drawText(cell.label, { x: labelX, y: this.y, font: this.bold, size: 8, color: SLATE_400 });
+        cell.lines.forEach((line, li) => {
+          this.page.drawText(line, { x: valueX, y: this.y - li * 11.5, font: this.reg, size: 9.5, color: SLATE_700 });
+        });
       });
-    });
-    this.y -= 3 * 16 + 14;
+      this.y -= height;
+    }
+    this.y -= 14;
 
     this.staticLines(
       'The allowances below are the budgeted maximum amounts available for each customer material selection. Quantities, allowance rates and suggested vendors are listed for review. Any selection exceeding its allowance requires written change-order approval before purchase. Unused allowance balances are not paid out in cash.',
@@ -396,7 +378,80 @@ class SelectionsPacket {
     });
     this.y -= 4;
 
-    // Column header band.
+    this.drawColumnHeaders();
+
+    items.forEach((item, rowIndex) => {
+      const descriptions = this.wrapClean(item.description, this.reg, 9.5, COL_DESC_W - 8);
+      const vendors = this.wrapClean(item.vendor || '-', this.reg, 8, COL_VENDOR_W - 4);
+      const notes = item.notes ? this.wrapClean(item.notes, this.italic, 8, COL_DESC_W - 8) : [];
+      // Long descriptions and room lists continue in bounded fragments instead
+      // of being silently truncated or overflowing the page.
+      let first = true;
+      while (descriptions.length || vendors.length || notes.length) {
+        const descLines = descriptions.splice(0, 22);
+        const vendorLines = vendors.splice(0, 22);
+        const bodyLines = Math.max(descLines.length, vendorLines.length);
+        const noteLines = descriptions.length || vendors.length ? [] : notes.splice(0, 22 - bodyLines);
+        const rowH = 6 + bodyLines * 11.5 + (noteLines.length > 0 ? noteLines.length * 10 + 8 : 0) + 5;
+        if (this.y - rowH - 6 < FOOTER_TOP) {
+          this.newPage();
+          this.page.drawText(this.clean(`${category} (continued)`), {
+            x: MARGIN, y: this.y - 12, font: this.bold, size: 10, color: SLATE_900,
+          });
+          this.y -= 23;
+          this.drawColumnHeaders();
+        }
+        const topY = this.y - 4;
+        if (rowIndex % 2 === 1) {
+          this.page.drawRectangle({
+            x: MARGIN - 4, y: topY - rowH + 2,
+            width: CONTENT_W + 8, height: rowH, color: SOFT,
+          });
+        }
+        let lineY = topY - 11.5;
+        for (const line of descLines) {
+          this.page.drawText(line, { x: COL_DESC_X, y: lineY, font: this.reg, size: 9.5, color: SLATE_700 });
+          lineY -= 11.5;
+        }
+        lineY = topY - 11.5;
+        for (const line of vendorLines) {
+          this.page.drawText(line, { x: COL_VENDOR_X, y: lineY, font: this.reg, size: 8, color: SLATE_600 });
+          lineY -= 11.5;
+        }
+        if (first) {
+          this.drawRightAligned(formatQty(item.qty), this.bold, 9.5, INK, COL_QTY_X + COL_QTY_W, topY - 11.5);
+          this.page.drawText(sanitize(item.uom || 'EA'), { x: COL_UOM_X, y: topY - 11.5, font: this.reg, size: 9, color: SLATE_600 });
+          this.moneyRight(COL_UNIT_X + COL_UNIT_W, topY - 11.5, formatMoney(item.allowance_per_unit), 9.5, this.reg, SLATE_700);
+          this.moneyRight(COL_TOTAL_X + COL_TOTAL_W, topY - 11.5, formatMoney(item.allowance_total), 9.5, this.bold, INK);
+        }
+        let noteY = topY - bodyLines * 11.5 - 12;
+        // Notes-only continuations start on the normal first text baseline.
+        if (!bodyLines) noteY = topY - 11.5;
+        for (const line of noteLines) {
+          this.page.drawText(line, { x: COL_DESC_X + 4, y: noteY, font: this.italic, size: 8, color: SLATE_500 });
+          noteY -= 10;
+        }
+        this.page.drawLine({
+          start: { x: MARGIN, y: topY - rowH + 1 },
+          end: { x: PAGE_W - MARGIN, y: topY - rowH + 1 }, thickness: 0.5, color: LINE,
+        });
+        this.y = topY - rowH - 4;
+        first = false;
+      }
+    });
+
+    this.ensure(22);
+    this.y -= 14;
+    const subtotalLabel = 'Category subtotal';
+    const labelW = this.bold.widthOfTextAtSize(subtotalLabel, 9);
+    this.page.drawText(subtotalLabel, {
+      x: MONEY_RIGHT - 132 - labelW, y: this.y, font: this.bold, size: 9, color: SLATE_700,
+    });
+    this.moneyRight(MONEY_RIGHT, this.y, formatMoney(categoryTotal), 9.5, this.bold, RED_DARK);
+    this.y -= 16;
+  }
+
+  private drawColumnHeaders() {
     const headerY = this.y - 9;
     this.page.drawText(sanitize('ITEM'), { x: COL_DESC_X, y: headerY, font: this.bold, size: 8, color: SLATE_500 });
     this.drawRightAligned('QTY', this.bold, 8, SLATE_500, COL_QTY_X + COL_QTY_W, headerY);
@@ -406,95 +461,6 @@ class SelectionsPacket {
     this.page.drawText(sanitize('VENDOR'), { x: COL_VENDOR_X, y: headerY, font: this.bold, size: 8, color: SLATE_500 });
     this.y -= 18;
 
-    items.forEach((item, rowIndex) => {
-      const descLines = this.capTwo(
-        this.wrapClean(item.description, this.reg, 9.5, COL_DESC_W - 8),
-        this.reg,
-        9.5,
-        COL_DESC_W - 8
-      );
-      const vendorLines = this.capTwo(
-        this.wrapClean(item.vendor || '-', this.reg, 8, COL_VENDOR_W - 4),
-        this.reg,
-        8,
-        COL_VENDOR_W - 4
-      );
-      const noteLines = item.notes
-        ? this.capTwo(this.wrapClean(item.notes, this.italic, 8, COL_DESC_W - 8), this.italic, 8, COL_DESC_W - 8)
-        : [];
-      const bodyLines = Math.max(descLines.length, vendorLines.length);
-      const rowH = 6 + bodyLines * 11.5 + (noteLines.length > 0 ? noteLines.length * 10 + 3 : 0) + 5;
-      this.ensure(rowH + 2);
-      const topY = this.y - 4;
-
-      if (rowIndex % 2 === 1) {
-        this.page.drawRectangle({
-          x: MARGIN - 4,
-          y: topY - rowH + 2,
-          width: CONTENT_W + 8,
-          height: rowH,
-          color: SOFT,
-        });
-      }
-
-      let lineY = topY - 11.5;
-      for (const line of descLines) {
-        this.page.drawText(line, { x: COL_DESC_X, y: lineY, font: this.reg, size: 9.5, color: SLATE_700 });
-        lineY -= 11.5;
-      }
-      lineY = topY - 11.5;
-      for (const line of vendorLines) {
-        this.page.drawText(line, { x: COL_VENDOR_X, y: lineY, font: this.reg, size: 8, color: SLATE_600 });
-        lineY -= 11.5;
-      }
-      this.drawRightAligned(formatQty(item.qty), this.bold, 9.5, INK, COL_QTY_X + COL_QTY_W, topY - 11.5);
-      this.page.drawText(sanitize(String(item.uom || 'EA')), {
-        x: COL_UOM_X,
-        y: topY - 11.5,
-        font: this.reg,
-        size: 9,
-        color: SLATE_600,
-      });
-      this.moneyRight(COL_UNIT_X + COL_UNIT_W, topY - 11.5, formatMoney(item.allowance_per_unit), 9.5, this.reg, SLATE_700);
-      this.moneyRight(COL_TOTAL_X + COL_TOTAL_W, topY - 11.5, formatMoney(item.allowance_total), 9.5, this.bold, INK);
-
-      if (noteLines.length > 0) {
-        let noteY = topY - 4 - bodyLines * 11.5 - 3;
-        for (const line of noteLines) {
-          this.page.drawText(line, {
-            x: COL_DESC_X + 4,
-            y: noteY,
-            font: this.italic,
-            size: 8,
-            color: SLATE_500,
-          });
-          noteY -= 10;
-        }
-      }
-
-      this.page.drawLine({
-        start: { x: MARGIN, y: topY - rowH + 1 },
-        end: { x: PAGE_W - MARGIN, y: topY - rowH + 1 },
-        thickness: 0.5,
-        color: LINE,
-      });
-      this.y = topY - rowH - 4;
-    });
-
-    // Category subtotal.
-    this.ensure(22);
-    this.y -= 14;
-    const subtotalLabel = 'Category subtotal';
-    const labelW = this.bold.widthOfTextAtSize(subtotalLabel, 9);
-    this.page.drawText(subtotalLabel, {
-      x: MONEY_RIGHT - 132 - labelW,
-      y: this.y,
-      font: this.bold,
-      size: 9,
-      color: SLATE_700,
-    });
-    this.moneyRight(MONEY_RIGHT, this.y, formatMoney(categoryTotal), 9.5, this.bold, RED_DARK);
-    this.y -= 16;
   }
 
   drawTotals(items: CustomerSelectionItem[]) {
@@ -632,6 +598,12 @@ export async function buildCustomerSelectionsPdf(
       'No customer selections to render — process an estimate (optionally with its Component Breakdown PDF) first.'
     );
   }
+  const invalid = items.filter((item) => item.allowance_status === 'needs_review' ||
+    !item.description?.trim() || !Number.isFinite(item.qty) || item.qty <= 0 ||
+    !Number.isFinite(item.allowance_per_unit) || item.allowance_per_unit < 0 ||
+    !Number.isFinite(item.allowance_total) || item.allowance_total < 0 ||
+    round2(item.qty * item.allowance_per_unit) !== round2(item.allowance_total));
+  if (invalid.length) throw new Error(`Review ${invalid.length} customer selection item(s): quantities and material allowances must be confirmed and totals must match before issuing the sheet.`);
   const checksum = computeCustomerSelectionsChecksum(estimate, items);
   const extraCodes = Array.from(
     new Set(

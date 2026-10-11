@@ -3,8 +3,8 @@
  * Sheet" data layer). Pure, environment-neutral — imported by the serverless
  * extraction graph (xactEngine.ts) and the browser UI alike.
  *
- * Selection rows are DERIVED from the budget engine's `material_allowances`
- * (Output 2) by a deterministic classifier, so extraction stays schema-stable.
+ * Selection rows combine explicit AI finish selections with the budget engine's
+ * audited allowances. Turnkey customer choices are retained independently.
  * The office can then edit them in the Customer Selections section and render
  * them with customerSelectionsPdf.ts. They are stored separately from
  * `material_allowances` so customer-facing edits never touch the procurement
@@ -12,6 +12,7 @@
  */
 import type {
   CustomerSelectionItem,
+  CustomerSelectionInput,
   EstimateResult,
   MaterialAllowanceItem,
 } from '../types/estimate.js';
@@ -24,6 +25,8 @@ export const SELECTION_CATEGORIES = [
   'Paint & Finishes',
   'Trim & Doors',
   'Plumbing Fixtures',
+  'Lighting & Electrical',
+  'Windows & Exterior',
   'Hardware',
   'Appliances',
   'Other',
@@ -36,11 +39,12 @@ export const SELECTION_TAX_RATE = 0.07;
 
 const round2 = (n: number): number => Math.round((n + Number.EPSILON) * 100) / 100;
 
-// Trades whose materials are never customer-finish selections (procurement-only
-// or turnkey). Turnkey rows are already dropped by the budget engine; this
-// guard also keeps demolition/cleaning consumables off the customer sheet.
+// Exclude work and hidden construction supplies, rather than entire turnkey
+// trades: customers still choose their carpet, fixtures and exterior finishes.
 const NON_SELECTION_TRADE_RX =
-  /demoli|mitigat|clean|drywall|plaster|insulat|framing|rough|mechan|mep|roof|gutter|siding|exterior|electri|plumb|hvac/i;
+  /demoli|mitigat|clean/i;
+const NON_SELECTION_DESCRIPTION_RX =
+  /\b(?:remove|removal|demolition|detach|reset|reinstall|clean|cleaning|protect|protection|masking|labor|labour|drywall|gypsum|insulation|lumber|studs?|joists?|subfloor|underlayment|padding|carpet pad|thinset|mortar|adhesive|caulk|sealant|primer|fasteners?|screws?|nails?|tape|poly sheeting|consumables?|supplies|rough[- ]?in|pipes?|conduit|wiring|junction box|ductwork)\b/i;
 
 const TRADE_CATEGORY: ReadonlyArray<[RegExp, SelectionCategory]> = [
   [/tile/i, 'Tile'],
@@ -50,17 +54,22 @@ const TRADE_CATEGORY: ReadonlyArray<[RegExp, SelectionCategory]> = [
   [/trim|door/i, 'Trim & Doors'],
   [/hardware/i, 'Hardware'],
   [/appliance/i, 'Appliances'],
+  [/plumb/i, 'Plumbing Fixtures'],
+  [/light|electri/i, 'Lighting & Electrical'],
+  [/window|roof|gutter|siding|exterior/i, 'Windows & Exterior'],
 ];
 
 const DESCRIPTION_CATEGORY: ReadonlyArray<[RegExp, SelectionCategory]> = [
-  [/tile|grout|thinset/i, 'Tile'],
-  [/carpet|lvp|lvt|vinyl|hardwood|laminate|underlayment|padding/i, 'Flooring'],
-  [/cabinet|countertop|backsplash|vanity top/i, 'Cabinets & Countertops'],
-  [/paint|primer|stain|wallcover/i, 'Paint & Finishes'],
-  [/baseboard|casing|trim|crown|door slab|jamb|stile/i, 'Trim & Doors'],
-  [/faucet|sink|shower|tub|toilet|valve/i, 'Plumbing Fixtures'],
-  [/knob|handle|hinge|lock|hardware/i, 'Hardware'],
-  [/refrigerator|dishwasher|range|oven|microwave|appliance/i, 'Appliances'],
+  [/\b(?:tiles?|grout|backsplash)\b/i, 'Tile'],
+  [/\b(?:knobs?|handles?|hinges?|locks?|hardware|pulls?|towel bars?|toilet paper holders?)\b/i, 'Hardware'],
+  [/\b(?:refrigerator|dishwasher|range|oven|microwave|appliance|washer|dryer|cooktop)\b/i, 'Appliances'],
+  [/\b(?:cabinets?|cabinetry|countertops?|vanity|vanities)\b|vanity top/i, 'Cabinets & Countertops'],
+  [/\b(?:carpet|lvp|lvt|hardwood|laminate|flooring)\b|vinyl (?:plank|floor|sheet)|wood floor/i, 'Flooring'],
+  [/\b(?:paint|stain|wallcover|wallpaper|finish color)\b/i, 'Paint & Finishes'],
+  [/\b(?:faucets?|sinks?|showers?|tubs?|bathtubs?|toilets?|lavatory|showerheads?|fixture valve)\b/i, 'Plumbing Fixtures'],
+  [/\b(?:light|lighting|chandelier|sconce|pendant|ceiling fan|switch plate|outlet cover)\b/i, 'Lighting & Electrical'],
+  [/\b(?:window|shingle|roofing|siding|gutter|soffit|exterior door|garage door)\b/i, 'Windows & Exterior'],
+  [/\b(?:baseboards?|casing|trim|crown|doors?|jamb|stile|moulding|molding)\b/i, 'Trim & Doors'],
 ];
 
 /**
@@ -74,45 +83,106 @@ export function classifySelectionCategory(
 ): SelectionCategory | undefined {
   const tradeLabel = String(trade || '').trim();
   const desc = String(description || '').trim();
-  if (!tradeLabel) return undefined;
-  if (NON_SELECTION_TRADE_RX.test(tradeLabel)) return undefined;
-  for (const [rx, category] of TRADE_CATEGORY) {
-    if (rx.test(tradeLabel)) return category;
-  }
+  if (!desc || NON_SELECTION_DESCRIPTION_RX.test(desc)) return undefined;
   for (const [rx, category] of DESCRIPTION_CATEGORY) {
     if (rx.test(desc)) return category;
+  }
+  if (NON_SELECTION_TRADE_RX.test(tradeLabel)) return undefined;
+  if (/drywall|plaster|insulat|framing|rough|mechan|mep|hvac/i.test(tradeLabel)) return undefined;
+  for (const [rx, category] of TRADE_CATEGORY) {
+    if (rx.test(tradeLabel)) return category;
   }
   return undefined;
 }
 
-/** Derives customer-selection rows from the budget engine's procurement allowances. */
+const normalized = (value: string | undefined): string =>
+  String(value || '').toLowerCase().replace(/\s+/g, ' ').trim();
+
+const productLabel = (value: string): string => normalized(value)
+  .replace(/\s*\((?:lvp|lvt)\)/g, '')
+  .replace(/\blvp\b/g, 'luxury vinyl plank')
+  .replace(/\blvt\b/g, 'luxury vinyl tile');
+
+const normalizedUom = (value: string): string => {
+  const unit = String(value || 'EA').toUpperCase().replace(/[\s.]+/g, '');
+  return ({ SQFT: 'SF', SQUAREFEET: 'SF', SQYD: 'SY', SQUAREYARDS: 'SY',
+    LINFT: 'LF', LINEARFEET: 'LF', EACH: 'EA', GALLON: 'GL', GALLONS: 'GL', GAL: 'GL' } as Record<string, string>)[unit] || unit;
+};
+
+/** Combines only compatible products/rates; differing finishes stay separate. */
+export function consolidateCustomerSelections(items: CustomerSelectionItem[]): CustomerSelectionItem[] {
+  const groups = new Map<string, CustomerSelectionItem>();
+  for (const item of items) {
+    const key = JSON.stringify([
+      item.category, productLabel(item.description), normalized(item.component_code),
+      item.uom, item.allowance_per_unit, normalized(item.vendor),
+      item.allowance_status || 'confirmed', item.source,
+    ]);
+    const existing = groups.get(key);
+    if (!existing) {
+      groups.set(key, { ...item });
+      continue;
+    }
+    existing.qty = Math.round((existing.qty + item.qty) * 1e6) / 1e6;
+    existing.allowance_total = round2(existing.qty * existing.allowance_per_unit);
+    existing.trade = [...new Set([...existing.trade.split('; '), item.trade].filter(Boolean))].join('; ');
+    existing.notes = [...new Set([...(existing.notes || '').split('; '), item.notes].filter(Boolean))].join('; ') || undefined;
+  }
+  return Array.from(groups.values()).map((item, i) => ({ ...item, id: `SEL-${i + 1}` }));
+}
+
+/** Uses explicit selections first, then fills gaps from audited procurement. */
 export function buildCustomerSelections(
-  allowances: MaterialAllowanceItem[] | undefined
+  allowances: MaterialAllowanceItem[] | undefined,
+  source: CustomerSelectionInput[] = []
 ): CustomerSelectionItem[] {
   const items: CustomerSelectionItem[] = [];
-  let n = 0;
-  for (const allowance of allowances || []) {
+  const procurement = (allowances || []).filter((item) =>
+    Number.isFinite(item.qty) && item.qty > 0 && Number.isFinite(item.unit_cost) && item.unit_cost >= 0
+  );
+  const sameProduct = (a: { description: string; component_code?: string; uom: string }, b: typeof a) =>
+    normalizedUom(a.uom) === normalizedUom(b.uom) &&
+    productLabel(a.description) === productLabel(b.description) &&
+    (!a.component_code || !b.component_code || normalized(a.component_code) === normalized(b.component_code));
+  const append = (input: CustomerSelectionInput, useAudited = true) => {
+    const category = classifySelectionCategory(input.trade, input.description);
+    if (!category || !Number.isFinite(input.qty) || input.qty <= 0) return;
+    const matches = useAudited ? procurement.filter((item) => sameProduct(item, input)) : [];
+    const rates = new Set(matches.map((item) => round2(item.unit_cost)));
+    // A single audited rate is safe to reuse; conflicting rates need review.
+    const audited = rates.size === 1 ? matches[0] : undefined;
+    const extracted = input.allowance_per_unit;
+    const confirmed = rates.size <= 1 && (Boolean(audited) ||
+      (typeof extracted === 'number' && Number.isFinite(extracted) && extracted >= 0));
+    const unit = confirmed ? round2(audited?.unit_cost ?? extracted!) : 0;
+    items.push({
+      id: '', category, trade: input.trade.trim(), component_code: input.component_code,
+      description: input.description.trim(), qty: input.qty,
+      uom: normalizedUom(input.uom),
+      allowance_per_unit: unit, allowance_total: round2(input.qty * unit),
+      vendor: input.vendor || audited?.vendor, notes: input.notes,
+      allowance_status: confirmed ? 'confirmed' : 'needs_review', source: 'estimate',
+    });
+  };
+  const seen = new Set<string>();
+  for (const input of source) {
+    const identity = JSON.stringify([
+      normalized(input.trade), normalized(input.component_code), normalized(input.description),
+      input.qty, normalizedUom(input.uom), input.allowance_per_unit,
+      normalized(input.vendor), normalized(input.notes),
+    ]);
+    if (seen.has(identity)) continue;
+    seen.add(identity);
+    append(input);
+  }
+  for (const allowance of procurement) {
     const category = classifySelectionCategory(allowance.trade, allowance.description);
     if (!category) continue;
-    const qty = Number.isFinite(allowance.qty) ? allowance.qty : 0;
-    const unit = Number.isFinite(allowance.unit_cost) ? allowance.unit_cost : 0;
-    if (qty <= 0 || !String(allowance.description || '').trim()) continue;
-    const unitRounded = round2(unit);
-    items.push({
-      id: `SEL-${++n}`,
-      category,
-      trade: String(allowance.trade || '').trim(),
-      component_code: allowance.component_code,
-      description: String(allowance.description || '').trim(),
-      qty,
-      uom: String(allowance.uom || 'EA').toUpperCase(),
-      allowance_per_unit: unitRounded,
-      allowance_total: round2(qty * unitRounded),
-      vendor: allowance.vendor ? String(allowance.vendor) : undefined,
-      source: 'estimate',
-    });
+    if (source.some((input) => Number.isFinite(input.qty) && input.qty > 0 &&
+      classifySelectionCategory(input.trade, input.description) && sameProduct(input, allowance))) continue;
+    append({ ...allowance, allowance_per_unit: allowance.unit_cost }, false);
   }
-  return items;
+  return consolidateCustomerSelections(items);
 }
 
 export interface SelectionTotals {
@@ -127,7 +197,7 @@ export function computeSelectionTotals(
 ): SelectionTotals {
   const subtotal = round2(
     (items || []).reduce(
-      (sum, item) => sum + (Number.isFinite(item.allowance_total) ? item.allowance_total : 0),
+      (sum, item) => sum + (item.allowance_status !== 'needs_review' && Number.isFinite(item.allowance_total) ? item.allowance_total : 0),
       0
     )
   );
@@ -143,7 +213,7 @@ export function groupSelectionsByCategory(
   SELECTION_CATEGORIES.forEach((category, i) => order.set(category, i));
   const groups = new Map<string, CustomerSelectionItem[]>();
   for (const item of items || []) {
-    const category = item.category || 'Other';
+    const category = SELECTION_CATEGORIES.find((category) => normalized(category) === normalized(item.category)) || 'Other';
     if (!groups.has(category)) groups.set(category, []);
     groups.get(category)!.push(item);
   }
@@ -176,6 +246,10 @@ export function computeCustomerSelectionsChecksum(
       item.qty,
       item.uom,
       item.allowance_per_unit,
+      item.category,
+      item.allowance_status,
+      item.vendor,
+      item.notes,
     ]),
   });
   let hash = 5381;

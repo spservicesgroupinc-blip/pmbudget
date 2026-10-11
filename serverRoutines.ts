@@ -120,18 +120,19 @@ export async function runProcessEstimate(payload: {
             ? componentsFilename
             : 'component breakdown report';
         sourceText = `${sourceText}\n\n===== COMPONENT BREAKDOWN REPORT (${componentLabel}) =====\n\n${componentText}`;
+      } else {
+        return { status: 422, body: { error: 'The component breakdown PDF has no readable text. Supply a readable report so material quantities and customer selections can be extracted accurately.' } };
       }
     }
 
-    const clippedText =
-      sourceText.length > MAX_TEXT_CHARS
-        ? `${sourceText.slice(0, MAX_TEXT_CHARS)}\n\n[...estimate text truncated for length...]`
-        : sourceText;
+    if (sourceText.length > MAX_TEXT_CHARS) {
+      return { status: 413, body: { error: 'The estimate and component report exceed the extraction text limit. Split the source into smaller documents so every customer selection can be read.' } };
+    }
 
     // Budget-engine v2: LLM extraction + normalization + deterministic
     // reconciliation (model arithmetic is never trusted), with retries,
     // truncation detection and JSON repair passes.
-    const estimate = await processEstimate(clippedText, {
+    const estimate = await processEstimate(sourceText, {
       userPrompt: typeof prompt === 'string' && prompt.trim() ? prompt : undefined,
     });
     estimate.source_filename = estimate.source_filename || sourceLabel;
@@ -140,6 +141,12 @@ export async function runProcessEstimate(payload: {
     console.error('Error in /api/process-estimate:', err);
     const name = err instanceof Error ? err.name : '';
     const message = err instanceof Error ? err.message : '';
+    if (/HTTP 401\b|Authentication Fails|invalid.*api.?key/i.test(message)) {
+      return {
+        status: 502,
+        body: { error: 'DeepSeek rejected the configured API key. Update DEEPSEEK_API_KEY in env/.env.local (or the hosting environment), restart the server, and reprocess the estimate.' },
+      };
+    }
     return {
       status: 500,
       body: {

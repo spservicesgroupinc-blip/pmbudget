@@ -95,6 +95,7 @@ export const CustomerSelectionsSection: React.FC<CustomerSelectionsSectionProps>
   const items = estimate?.customer_selections ?? [];
   const groups = useMemo(() => groupSelectionsByCategory(items), [items]);
   const totals = useMemo(() => computeSelectionTotals(items), [items]);
+  const unpricedCount = items.filter((item) => item.allowance_status === 'needs_review').length;
 
   if (!estimate) {
     return (
@@ -125,8 +126,8 @@ export const CustomerSelectionsSection: React.FC<CustomerSelectionsSectionProps>
   };
 
   const commitQty = (id: string, raw: string) => {
-    const qty = parseFloat(raw);
-    if (!Number.isFinite(qty) || qty < 0) return;
+    const qty = Number(raw);
+    if (!raw.trim() || !Number.isFinite(qty) || qty <= 0) return;
     const next = items.map((item) =>
       item.id === id
         ? { ...item, qty, allowance_total: round2(qty * item.allowance_per_unit) }
@@ -136,11 +137,13 @@ export const CustomerSelectionsSection: React.FC<CustomerSelectionsSectionProps>
   };
 
   const commitUnitCost = (id: string, raw: string) => {
-    const unit = parseFloat(raw);
-    if (!Number.isFinite(unit) || unit < 0) return;
+    if (!raw.trim()) return;
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed < 0) return;
+    const unit = round2(parsed);
     const next = items.map((item) =>
       item.id === id
-        ? { ...item, allowance_per_unit: unit, allowance_total: round2(item.qty * unit) }
+        ? { ...item, allowance_per_unit: unit, allowance_total: round2(item.qty * unit), allowance_status: 'confirmed' as const }
         : item
     );
     commit(next);
@@ -183,7 +186,8 @@ export const CustomerSelectionsSection: React.FC<CustomerSelectionsSectionProps>
       qty,
       uom: addForm.uom.toUpperCase() || 'EA',
       allowance_per_unit: round2(unit),
-      allowance_total: round2(qty * unit),
+      allowance_total: round2(qty * round2(unit)),
+      allowance_status: 'confirmed',
       vendor: addForm.vendor.trim() || undefined,
       notes: addForm.notes.trim() || undefined,
       source: 'manual',
@@ -195,20 +199,24 @@ export const CustomerSelectionsSection: React.FC<CustomerSelectionsSectionProps>
   };
 
   const handleRebuild = () => {
-    const rebuilt = buildCustomerSelections(estimate.material_allowances);
+    const rebuilt = buildCustomerSelections(estimate.material_allowances, estimate.customer_selection_source);
     commit(rebuilt);
     setConfirmRebuild(false);
     onShowToast(
       rebuilt.length > 0 ? 'success' : 'warning',
       rebuilt.length > 0
-        ? `Rebuilt ${rebuilt.length} selection item(s) from ${estimate.material_allowances?.length || 0} material allowance row(s).`
-        : 'No selection items could be derived from the current material allowances.'
+        ? `Rebuilt ${rebuilt.length} grouped selection item(s) from the extracted finishes and material allowances.`
+        : 'No selection items could be derived. Reprocess the estimate or add items manually.'
     );
   };
 
   const handleGenerate = async () => {
     if (items.length === 0) {
       onShowToast('warning', 'No customer selections to render yet.');
+      return;
+    }
+    if (unpricedCount > 0) {
+      onShowToast('warning', `Confirm the material allowance for ${unpricedCount} selection item(s) before generating the sheet.`);
       return;
     }
     setGenerating(true);
@@ -237,25 +245,27 @@ export const CustomerSelectionsSection: React.FC<CustomerSelectionsSectionProps>
     }
   };
 
-  const materialAllowanceCount = estimate.material_allowances?.length || 0;
+  const sourceCount = (estimate.material_allowances?.length || 0) + (estimate.customer_selection_source?.length || 0);
 
   return (
     <div className="space-y-6">
       {/* Workflow banner */}
       <div
         className={`rounded-xl border px-4 py-3 text-[13px] font-medium flex items-start gap-2.5 ${
-          items.length > 0
+          items.length > 0 && unpricedCount === 0
             ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
             : 'border-amber-200 bg-amber-50 text-amber-800'
         }`}
       >
-        {items.length > 0 ? (
+        {items.length > 0 && unpricedCount === 0 ? (
           <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
         ) : (
           <Info className="w-4 h-4 shrink-0 mt-0.5" />
         )}
         <span>
-          {items.length > 0
+          {unpricedCount > 0
+            ? `${unpricedCount} selection item(s) need a material allowance — enter the price in $/Unit before generating the customer sheet.`
+            : items.length > 0
             ? `Customer selections ready — review and adjust the ${items.length} allowance item(s), then generate the allowance sheet.`
             : 'No customer selections yet — upload the estimate with its optional Component Breakdown Report to populate selection allowances automatically, or add items manually.'}
         </span>
@@ -280,21 +290,22 @@ export const CustomerSelectionsSection: React.FC<CustomerSelectionsSectionProps>
           <div className="flex items-center gap-2">
             <button
               type="button"
-              disabled={materialAllowanceCount === 0}
+              disabled={sourceCount === 0}
               onClick={() => setConfirmRebuild(true)}
               title={
-                materialAllowanceCount === 0
-                  ? 'No material allowance rows to rebuild from'
-                  : `Rebuild from ${materialAllowanceCount} material allowance row(s)`
+                sourceCount === 0
+                  ? 'Reprocess the estimate to extract customer finishes'
+                  : 'Rebuild grouped choices from extracted finishes and audited material allowances'
               }
               className="inline-flex items-center justify-center gap-1.5 h-9 px-3.5 rounded-lg text-[12px] font-semibold border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 transition-colors disabled:opacity-45 disabled:cursor-not-allowed"
             >
               <RefreshCw className="w-3.5 h-3.5" />
-              Rebuild from Allowances
+              Rebuild Selections
             </button>
             <button
               type="button"
-              disabled={items.length === 0 || generating}
+              disabled={items.length === 0 || generating || unpricedCount > 0}
+              title={unpricedCount > 0 ? 'Confirm all material allowance prices first' : undefined}
               onClick={handleGenerate}
               className="inline-flex items-center justify-center gap-2 h-9 px-4 rounded-lg text-[12px] font-semibold bg-red-600 text-white hover:bg-red-700 shadow-sm transition-colors disabled:opacity-45 disabled:cursor-not-allowed"
             >
@@ -359,7 +370,7 @@ export const CustomerSelectionsSection: React.FC<CustomerSelectionsSectionProps>
                     </span>
                   </div>
                   {group.items.map((item) => (
-                    <div key={item.id} className="px-5 py-3 border-b border-slate-100 last:border-0">
+                    <div key={`${item.id}:${item.description}:${item.qty}:${item.uom}:${item.allowance_per_unit}:${item.allowance_status}:${item.vendor}:${item.notes}`} className="px-5 py-3 border-b border-slate-100 last:border-0">
                       <div className="flex flex-wrap md:flex-nowrap items-start gap-3">
                         {/* Description + notes */}
                         <div className="w-full md:w-auto md:flex-1 min-w-[220px]">
@@ -416,10 +427,13 @@ export const CustomerSelectionsSection: React.FC<CustomerSelectionsSectionProps>
                           {fieldLabel('Qty')}
                           <input
                             type="number"
-                            min={0}
+                            min={0.000001}
                             step="any"
                             defaultValue={item.qty}
-                            onChange={(e) => commitQty(item.id, e.target.value)}
+                            onBlur={(e) => {
+                              commitQty(item.id, e.target.value);
+                              e.target.value = String(Number.isFinite(Number(e.target.value)) && Number(e.target.value) > 0 && e.target.value.trim() ? Number(e.target.value) : item.qty);
+                            }}
                             className={`${inputClass} tabular-nums`}
                           />
                         </div>
@@ -448,9 +462,17 @@ export const CustomerSelectionsSection: React.FC<CustomerSelectionsSectionProps>
                           <input
                             type="number"
                             min={0}
-                            step="any"
-                            defaultValue={item.allowance_per_unit}
-                            onChange={(e) => commitUnitCost(item.id, e.target.value)}
+                            step="0.01"
+                            defaultValue={item.allowance_status === 'needs_review' ? '' : item.allowance_per_unit}
+                            placeholder={item.allowance_status === 'needs_review' ? 'Confirm' : undefined}
+                            aria-label={`Material allowance per unit for ${item.description}`}
+                            onBlur={(e) => {
+                              commitUnitCost(item.id, e.target.value);
+                              const value = Number(e.target.value);
+                              e.target.value = e.target.value.trim() && Number.isFinite(value) && value >= 0
+                                ? String(round2(value))
+                                : item.allowance_status === 'needs_review' ? '' : String(item.allowance_per_unit);
+                            }}
                             className={`${inputClass} tabular-nums`}
                           />
                         </div>
@@ -458,7 +480,7 @@ export const CustomerSelectionsSection: React.FC<CustomerSelectionsSectionProps>
                         {/* Total (display) */}
                         <div className="w-[96px] pt-5">
                           <p className="text-[13px] font-bold text-slate-900 tabular-nums text-right">
-                            {formatMoney(item.allowance_total)}
+                            {item.allowance_status === 'needs_review' ? 'Needs price' : formatMoney(item.allowance_total)}
                           </p>
                           <p className="text-[10px] text-slate-400 text-right mt-0.5">
                             total allowance
@@ -676,7 +698,7 @@ export const CustomerSelectionsSection: React.FC<CustomerSelectionsSectionProps>
         isOpen={confirmRebuild}
         title="Rebuild Customer Selections?"
         subtitle="Replace the current selection rows"
-        message={`This replaces all ${items.length} current selection item(s) with rows derived from the ${materialAllowanceCount} material allowance row(s) extracted from the estimate. Manual edits will be lost.`}
+        message={`This replaces all ${items.length} current selection item(s) with grouped rows from the extracted customer finishes and material allowances. Manual edits will be lost. For older estimates, reprocess the source to include turnkey customer choices.`}
         confirmLabel="Rebuild"
         onConfirm={handleRebuild}
         onCancel={() => setConfirmRebuild(false)}

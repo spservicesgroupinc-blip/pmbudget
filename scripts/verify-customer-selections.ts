@@ -4,7 +4,7 @@
 // token on the sheet must be an allow-listed allowance figure, and no carrier
 // RCV / O&P / margin language or Xactimate category codes may appear.
 // Run: npx tsx scripts/verify-customer-selections.ts
-import { writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PDFDocument } from 'pdf-lib';
 import { SAMPLE_ESTIMATES } from '../src/services/sampleEstimates.ts';
@@ -20,7 +20,9 @@ import {
 } from '../src/utils/customerSelections.ts';
 import { buildCustomerSelectionsPdf } from '../src/utils/customerSelectionsPdf.ts';
 import { extractPdfText } from '../pdfText.ts';
-import type { EstimateResult, MaterialAllowanceItem } from '../src/types/estimate.ts';
+import { ESTIMATE_RESPONSE_SCHEMA, normalizeEstimate, processEstimate } from '../xactEngine.ts';
+import { runProcessEstimate } from '../serverRoutines.ts';
+import type { CustomerSelectionInput, EstimateResult, MaterialAllowanceItem } from '../src/types/estimate.ts';
 
 let failures = 0;
 const check = (label: string, ok: boolean, detail = '') => {
@@ -77,6 +79,7 @@ async function textOverlapPairs(bytes: Uint8Array): Promise<number> {
 }
 
 async function main() {
+  mkdirSync(join('scripts', '__verify_tmp'), { recursive: true });
   // 1) Deterministic classifier checks against a fixed fixture set.
   const fixtures: MaterialAllowanceItem[] = [
     { trade: 'Flooring', description: 'Luxury Vinyl Plank (LVP)', qty: 100, uom: 'SF', unit_cost: 3.25, extended_cost: 325 },
@@ -87,13 +90,13 @@ async function main() {
     { trade: 'Rough Mechanicals (MEP)', description: 'Kitchen faucet', qty: 1, uom: 'EA', unit_cost: 165, extended_cost: 165 },
   ];
   const derived = buildCustomerSelections(fixtures);
-  check('classifier: derived 3 selection rows', derived.length === 3, `${derived.length} row(s)`);
+  check('classifier: derived all 4 finish rows including the faucet', derived.length === 4, `${derived.length} row(s)`);
   check('classifier: flooring category', derived[0]?.category === 'Flooring', derived[0]?.category);
   check('classifier: cabinets category', derived[1]?.category === 'Cabinets & Countertops', derived[1]?.category);
   check('classifier: paint category', derived[2]?.category === 'Paint & Finishes', derived[2]?.category);
   check(
     'classifier: sequential ids',
-    derived.map((d) => d.id).join(',') === 'SEL-1,SEL-2,SEL-3',
+    derived.map((d) => d.id).join(',') === 'SEL-1,SEL-2,SEL-3,SEL-4',
     derived.map((d) => d.id).join(',')
   );
   check(
@@ -107,7 +110,201 @@ async function main() {
   );
   check('classifier: demo/cleaning excluded', classifySelectionCategory('Demolition & Water Mitigation', '6 mil poly sheeting') === undefined);
   check('classifier: drywall excluded', classifySelectionCategory('Drywall & Wall Prep', '1/2" gypsum board') === undefined);
-  check('classifier: turnkey MEP excluded', classifySelectionCategory('Rough Mechanicals (MEP)', 'Kitchen faucet') === undefined);
+  check('classifier: MEP finish fixture retained', classifySelectionCategory('Rough Mechanicals (MEP)', 'Kitchen faucet') === 'Plumbing Fixtures');
+  const categoryCases: Array<[string, string, string | undefined]> = [
+    ['Flooring (Hard Surfaces)', 'Porcelain tile', 'Tile'],
+    ['Cabinets & Countertops', 'Cabinet pulls', 'Hardware'],
+    ['Cabinets & Countertops', 'Kitchen sink', 'Plumbing Fixtures'],
+    ['Flooring', 'Laminate countertop', 'Cabinets & Countertops'],
+    ['Cabinets & Countertops', 'Cabinet doors', 'Cabinets & Countertops'],
+    ['Cleaning & Final Punch', 'Dishwasher', 'Appliances'],
+    ['Flooring (Carpet)', 'Carpet', 'Flooring'],
+    ['Electrical', 'Pendant lighting', 'Lighting & Electrical'],
+    ['Siding & Exterior', 'Vinyl siding', 'Windows & Exterior'],
+    ['Roofing & Gutters', 'Architectural shingle', 'Windows & Exterior'],
+    ['Finish Trim & Doors', 'Interior door', 'Trim & Doors'],
+    ['', 'Bathroom faucet', 'Plumbing Fixtures'],
+    ['Flooring', 'Underlayment', undefined],
+    ['Flooring', 'Floor adhesive', undefined],
+    ['Painting', 'Primer', undefined],
+    ['Flooring', 'Remove carpet', undefined],
+    ['Plumbing', 'Detach and reset toilet', undefined],
+    ['Cabinets', 'Cabinet install labor', undefined],
+  ];
+  for (const [trade, description, category] of categoryCases) {
+    check(`classifier: ${description}`, classifySelectionCategory(trade, description) === category);
+  }
+
+  const source: CustomerSelectionInput[] = [
+    { trade: 'Flooring', description: 'Luxury Vinyl Plank (LVP)', qty: 40, uom: 'SF', allowance_per_unit: null, notes: 'Kitchen - choose finish' },
+    { trade: 'Flooring', description: 'Luxury Vinyl Plank (LVP)', qty: 60, uom: 'SF', allowance_per_unit: null, notes: 'Hall - choose finish' },
+    { trade: 'Plumbing', description: 'Bathroom faucet', qty: 1, uom: 'EA', allowance_per_unit: null },
+    { trade: 'Flooring (Carpet)', description: 'Bedroom carpet', qty: 200, uom: 'SF', allowance_per_unit: 2.25 },
+  ];
+  const combined = buildCustomerSelections([fixtures[0]], [...source, source[2]]);
+  check('grouping: duplicate extraction and source/procurement overlap counted once', combined.length === 3);
+  check('grouping: quantities combined without procurement waste', combined[0].qty === 100 && combined[0].allowance_total === 325);
+  check('grouping: both room notes retained', Boolean(combined[0].notes?.includes('Kitchen') && combined[0].notes?.includes('Hall')));
+  check('pricing: audited rate recovers unpriced source product', combined[0].allowance_per_unit === 3.25 && combined[0].allowance_status === 'confirmed');
+  check('pricing: unknown faucet price requires review', combined[1].allowance_status === 'needs_review');
+  check('coverage: turnkey carpet retained', combined[2].category === 'Flooring' && combined[2].qty === 200);
+  check('totals: unknown pricing excluded', computeSelectionTotals(combined).subtotal === 775);
+  check('grouping: differing finishes/rates remain separate', buildCustomerSelections([
+    { ...fixtures[0], description: 'Oak flooring - natural', qty: 10 },
+    { ...fixtures[0], description: 'Oak flooring - stained', qty: 10 },
+    { ...fixtures[0], description: 'Oak flooring - natural', qty: 10, unit_cost: 4 },
+  ]).length === 3);
+  check('grouping: fractional and decimal specifications remain distinct', buildCustomerSelections([
+    { ...fixtures[0], description: '1/2 inch hardwood' },
+    { ...fixtures[0], description: '1.2 inch hardwood' },
+  ]).length === 2);
+  const distinctProducts = buildCustomerSelections([
+    { ...fixtures[0], description: 'Porcelain tile - white', component_code: 'FCT TILE' },
+    { ...fixtures[0], description: 'Porcelain tile - black', component_code: 'FCT TILE' },
+  ], [{ trade: 'Flooring', description: 'Porcelain tile - white', component_code: 'FCT TILE', qty: 100, uom: 'SF', allowance_per_unit: 3.25 }]);
+  check('grouping: shared component code cannot hide a different finish', distinctProducts.length === 2);
+  const aliases = buildCustomerSelections([fixtures[0]], [{ ...source[0], description: 'LVP', uom: 'sq. ft.' }]);
+  check('grouping: product and unit aliases match audited rows once', aliases.length === 1 && aliases[0].allowance_per_unit === 3.25 && aliases[0].uom === 'SF');
+  const uncertain = buildCustomerSelections([
+    fixtures[0], { ...fixtures[0], unit_cost: 4 },
+  ], [source[0]]);
+  check('pricing: conflicting audited rates require review', uncertain[0].allowance_status === 'needs_review');
+  check('classifier: invalid negative and nonfinite rates discarded', buildCustomerSelections([
+    { ...fixtures[0], unit_cost: -1 }, { ...fixtures[0], unit_cost: NaN }, { ...fixtures[0], qty: Infinity },
+  ]).length === 0);
+  check('grouping: category spelling normalized', groupSelectionsByCategory([
+    { ...combined[0], category: ' flooring ' }, { ...combined[2], category: 'FLOORING' },
+  ]).length === 1);
+
+  const rawEstimate = {
+    project_meta: { client_name: 'Selection Test', claim_number: 'SEL-TEST', total_rcv: 2000 },
+    trade_sections: [
+      { task_id: 'T-1', trade_name: 'Flooring', category_codes_included: ['FCV'], direct_subtotal: 1000, suggested_duration_days: 2, predecessors: '', scope_summary: 'Install flooring.' },
+      { task_id: 'T-2', trade_name: 'Plumbing', category_codes_included: ['PLM'], direct_subtotal: 1000, suggested_duration_days: 2, predecessors: '', scope_summary: 'Install faucet.' },
+    ],
+    customer_selections: source,
+    material_allowances: [fixtures[0], { trade: 'Plumbing', description: 'Bathroom faucet', qty: 1, uom: 'EA', unit_cost: 100 }],
+  };
+  const normalized = normalizeEstimate(rawEstimate);
+  check('normalization: independent source survives', normalized.estimate.customer_selection_source?.length === 4);
+  check('schema: customer selection extraction required', ESTIMATE_RESPONSE_SCHEMA.required.includes('customer_selections'));
+  const many = normalizeEstimate({ ...rawEstimate, material_allowances: Array.from({ length: 240 }, (_, i) => ({ ...fixtures[0], description: `LVP finish ${i}` })) });
+  check('normalization: no silent 200-row cutoff', many.estimate.material_allowances?.length === 240);
+  const unknown = normalizeEstimate({ ...rawEstimate, customer_selections: [{ ...source[2], allowance_per_unit: 'unknown' }] });
+  check('normalization: malformed price stays unknown', unknown.estimate.customer_selection_source?.[0].allowance_per_unit === null);
+
+  // Exercise the real server pipeline with the external model response stubbed.
+  const originalFetch = globalThis.fetch;
+  const originalKey = process.env.DEEPSEEK_API_KEY;
+  let prompt = '';
+  process.env.DEEPSEEK_API_KEY = 'offline-verification';
+  globalThis.fetch = async (_url, init) => {
+    prompt = String(init?.body || '');
+    return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(rawEstimate) }, finish_reason: 'stop' }] }), { status: 200 });
+  };
+  let pipeline: EstimateResult;
+  try {
+    pipeline = await processEstimate('FCV Flooring 1000.00\nPLM Faucet 1000.00\nTotal RCV 2000.00');
+    const oversized = await runProcessEstimate({ textContent: 'x'.repeat(250001) });
+    check('source: oversized documents rejected rather than silently clipped', oversized.status === 413);
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls++;
+      return new Response(JSON.stringify({ choices: [{
+        message: { content: JSON.stringify(calls === 1 ? { ...rawEstimate, customer_selections: [source[0]] } : rawEstimate) },
+        finish_reason: calls === 1 ? 'length' : 'stop',
+      }] }), { status: 200 });
+    };
+    const retried = await processEstimate('FCV Flooring 1000.00\nPLM Faucet 1000.00\nTotal RCV 2000.00');
+    check('AI: truncated valid JSON retried to recover remaining selections', calls === 2 && retried.customer_selections?.length === 3);
+    globalThis.fetch = async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ ...rawEstimate, customer_selections: undefined }) }, finish_reason: 'stop' }] }), { status: 200 });
+    let missingListRejected = false;
+    try { await processEstimate('FCV Flooring 1000.00'); } catch { missingListRejected = true; }
+    check('AI: omitted selection list cannot be reported as complete', missingListRejected);
+    globalThis.fetch = async () => new Response(JSON.stringify({ error: { message: 'Authentication Fails: invalid API key.' } }), { status: 401 });
+    const originalError = console.error;
+    console.error = () => {};
+    let authentication;
+    try { authentication = await runProcessEstimate({ textContent: 'FCV Flooring 1000.00' }); }
+    finally { console.error = originalError; }
+    check('API: invalid provider key returns an actionable error', authentication.status === 502 && JSON.stringify(authentication.body).includes('Update DEEPSEEK_API_KEY'));
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalKey === undefined) delete process.env.DEEPSEEK_API_KEY;
+    else process.env.DEEPSEEK_API_KEY = originalKey;
+  }
+  check('AI prompt: every room, turnkey choices, no row limit', prompt.includes('EVERY room') && prompt.includes('turnkey') && prompt.includes('Do not impose a row limit'));
+  check('pipeline: source choices survive budget turnkey filtering', pipeline.customer_selections?.length === 3 && pipeline.material_allowances?.length === 1);
+  check('pipeline: missing price produces visible warning', Boolean(pipeline.processing?.warnings?.some((warning) => warning.includes('pricing confirmed'))));
+  check('rebuild: all originally extracted choices preserved', JSON.stringify(buildCustomerSelections(pipeline.material_allowances, pipeline.customer_selection_source)) === JSON.stringify(pipeline.customer_selections));
+  let refused = false;
+  try { await buildCustomerSelectionsPdf(pipeline); } catch { refused = true; }
+  check('PDF: unconfirmed pricing cannot be issued', refused);
+
+  if (process.argv.includes('--live')) {
+    const { default: dotenv } = await import('dotenv');
+    dotenv.config({ path: ['env/.env.local', 'env/.env', '.env.local', '.env'], quiet: true });
+    const live = await processEstimate(`Xactimate selection verification fixture
+Insured: Selection Verification. Claim SEL-LIVE. Carrier: Test Carrier.
+All prices below are material-only pre-tax allowances; labor is separately provided.
+Kitchen:
+1. FCV Luxury vinyl plank flooring, natural oak finish: 40 SF, material-only $3.25/SF.
+2. FCT Porcelain floor tile, matte: 20 SF, material-only $4.00/SF.
+3. CAB Base cabinets, shaker: 8 LF, material-only $150.00/LF.
+4. CTR Granite countertop: 12 SF, material-only $55.00/SF.
+5. PLM Kitchen faucet: 1 EA, material-only $165.00/EA.
+6. CAB Cabinet pulls, brushed nickel: 10 EA, material-only $8.00/EA.
+7. ELE Pendant lighting: 2 EA, material-only $80.00/EA.
+8. APP Dishwasher: 1 EA, material-only $400.00/EA.
+Hall:
+9. FCV Luxury vinyl plank flooring, natural oak finish: 60 SF, material-only $3.25/SF.
+10. DOR Interior door slab: 1 EA, material-only $90.00/EA.
+Bedroom:
+11. FCC Bedroom carpet, plush: 200 SF, material-only $2.25/SF (turnkey subcontract).
+12. PNT Interior latex paint: 3 GL, material-only $42.00/GL. Customer chooses color.
+Exterior:
+13. SDG Vinyl siding, lap: 100 SF, material-only $3.00/SF (turnkey subcontract).
+Excluded construction supplies and nonreplacement work:
+14. DRY Gypsum board: 10 SH at $14.00/SH.
+15. FCV Underlayment: 100 SF at $0.50/SF.
+16. FCC Remove carpet ONLY: 100 SF labor $0.80/SF; no replacement carpet here.
+Line Item Total 6244.00
+Total RCV 6244.00`);
+    const selected = live.customer_selections || [];
+    if (selected.length !== 12) console.log('Synthetic fixture diagnostics:', JSON.stringify({
+      choices: selected.map((item) => ({ description: item.description, trade: item.trade, category: item.category })),
+      warnings: live.processing?.warnings,
+    }));
+    const expected: Array<[RegExp, string]> = [
+      [/vinyl.*plank|lvp/i, 'Flooring'], [/porcelain.*tile/i, 'Tile'],
+      [/cabinet(?!.*pull)/i, 'Cabinets & Countertops'], [/granite|countertop/i, 'Cabinets & Countertops'],
+      [/faucet/i, 'Plumbing Fixtures'], [/pull|hardware/i, 'Hardware'],
+      [/pendant|lighting/i, 'Lighting & Electrical'], [/dishwasher/i, 'Appliances'],
+      [/door/i, 'Trim & Doors'], [/carpet/i, 'Flooring'],
+      [/paint/i, 'Paint & Finishes'], [/siding/i, 'Windows & Exterior'],
+    ];
+    for (const [rx, category] of expected) check(`live AI: ${category} ${rx.source}`, selected.some((item) => rx.test(item.description) && item.category === category));
+    check('live AI: all 12 distinct customer products found', selected.length === 12, `${selected.length} products`);
+    const planks = selected.filter((item) => /vinyl.*plank|lvp/i.test(item.description));
+    check('live AI: two rooms combined to 100 SF without waste', planks.length === 1 && planks[0].qty === 100, JSON.stringify(planks.map((item) => ({ qty: item.qty, description: item.description }))));
+    check('live AI: no supplies or removal-only work', selected.every((item) => !/gypsum|underlayment|remove/i.test(item.description)));
+    check('live AI: explicit material-only rates confirmed', selected.every((item) => item.allowance_status === 'confirmed'));
+  }
+
+  const longDescription = 'Porcelain tile ' + Array.from({ length: 85 }, (_, i) => `finishword${i}`).join(' ') + ' DESCRIPTION-END';
+  const longNotes = Array.from({ length: 180 }, (_, i) => `Room${i} choose color.`).join(' ') + ' NOTES-END';
+  const stressItems = Array.from({ length: 38 }, (_, i) => ({
+    ...combined[0], id: `STRESS-${i}`, category: 'Tile',
+    description: i === 0 ? longDescription : `Porcelain tile finish ${i}`,
+    notes: i === 0 ? longNotes : `Room ${i} - choose color`,
+  }));
+  const stressBytes = await buildCustomerSelectionsPdf({ ...pipeline, customer_selections: stressItems });
+  writeFileSync(join('scripts', '__verify_tmp', 'out-selections-complete.pdf'), stressBytes);
+  const stressText = normalize(await extractPdfText(Buffer.from(stressBytes).toString('base64')));
+  check('PDF: full descriptions and room notes retained', stressText.includes('DESCRIPTION-END') && stressText.includes('NOTES-END'));
+  check('PDF: all choices across pages retained', stressItems.slice(1).every((item) => stressText.includes(item.description)));
+  check('PDF: repeated category and table headers', stressText.includes('Tile (continued)'));
+  check('PDF: multipage long descriptions have no text overlaps', await textOverlapPairs(Uint8Array.from(stressBytes)) === 0);
 
   // 2) Sample-by-sample: engine preservation, totals math, PDF policy.
   for (const key of Object.keys(SAMPLE_ESTIMATES)) {

@@ -76,12 +76,14 @@ export interface EstimateResult {
   /** Itemized material procurement allowance (Output 2 of the budget spec). */
   material_allowances?: MaterialAllowanceItem[];
   /**
-   * Customer-facing material selection allowances, derived from
-   * material_allowances and editable in the Customer Selections section.
+   * Customer-facing finish choices extracted independently and reconciled
+   * with material_allowances; editable in the Customer Selections section.
    * Stored separately so customer-facing edits never touch the budget engine
    * procurement list or its audit checksums.
    */
   customer_selections?: CustomerSelectionItem[];
+  /** Original AI finish selections, retained so rebuilding includes turnkey choices. */
+  customer_selection_source?: CustomerSelectionInput[];
   /** Crew-ready field work orders with contract amounts linked to budget lines (carrier margins excluded). */
   work_orders?: WorkOrder[];
   work_order_site?: WorkOrderSiteLogistics;
@@ -124,7 +126,21 @@ export interface CustomerSelectionItem {
   allowance_total: number;
   vendor?: string;
   notes?: string;
+  /** Unknown material-only pricing must be confirmed before issuing the sheet. */
+  allowance_status?: 'confirmed' | 'needs_review';
   source: 'estimate' | 'manual';
+}
+
+/** Extracted customer choice; a missing price is distinct from an explicit zero. */
+export interface CustomerSelectionInput {
+  trade: string;
+  component_code?: string;
+  description: string;
+  qty: number;
+  uom: string;
+  allowance_per_unit: number | null;
+  vendor?: string;
+  notes?: string;
 }
 
 export interface BudgetAudit {

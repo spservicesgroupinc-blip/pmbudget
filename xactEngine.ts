@@ -10,16 +10,17 @@
  */
 import { deepseekJsonWithMeta, resolveModel } from './deepseek.js';
 import { applyBudgetEngine, DIVISION_PROFILES, matchDivision } from './src/utils/budgetEngine.js';
-import { buildCustomerSelections } from './src/utils/customerSelections.js';
+import { buildCustomerSelections, classifySelectionCategory } from './src/utils/customerSelections.js';
 import { mineEstimateDollars } from './estimateTextMiner.js';
 import type { MinedEstimate } from './estimateTextMiner.js';
 import type {
   EstimateResult,
+  CustomerSelectionInput,
   MaterialAllowanceItem,
   TradeSection,
 } from './src/types/estimate.js';
 
-export const ESTIMATE_ENGINE_VERSION = 'budget-engine-v2';
+export const ESTIMATE_ENGINE_VERSION = 'budget-engine-v3-selections';
 
 const DIVISION_TABLE = `- Demolition & Hauling | DEM, DMO, WTR | In-House Self-Perform | direct labor = 72% of retail labor; consumables only
 - Framing & Rough Carpentry | FRM | In-House Self-Perform | direct labor = 72%
@@ -78,7 +79,29 @@ For each trade package provide:
   margin language, insurance jargon or Xactimate category codes in this summary.
 - exclusions: credited, omitted or DO NOT PERFORM items for this package; [] when none.
 
-3) MATERIAL ALLOWANCE ITEMS (procurement list, Output 2)
+3) CUSTOMER SELECTIONS (customer_selections, independent of procurement)
+Read EVERY room and line item, including customer choices supplied by turnkey subcontractors.
+Extract ALL new/replacement finishes the customer must choose: flooring/carpet, tile and grout
+color, cabinets, countertops, paint/wallcovering, trim/doors, plumbing fixtures, decorative
+lighting, windows/exterior finishes, hardware and appliances. Never omit a finish because its
+trade is turnkey or its material price is absent. Do not impose a row limit.
+- Exclude removal-only, detach/reset/reinstall, cleaning, labor-only, credited/negative and
+  DO NOT PERFORM items, and hidden construction supplies (drywall, framing, adhesives, etc.).
+  A replacement line that includes installation still represents a customer material choice.
+- Keep different materials, grades, sizes, finishes and units separate. Each physical product
+  appears once: do not count both the estimate line and its component-report equivalent.
+- When the component report provides that product, use its exact material quantity and unit,
+  WITHOUT additional waste. Otherwise use the estimate's installed quantity, WITHOUT waste.
+- Use the same plain-language product description and component_code as material_allowances
+  for matching products. Include rooms/areas and the choice needed in notes.
+- allowance_per_unit is MATERIAL-ONLY, pre-tax pricing explicitly supported by the source.
+  NEVER use a combined supply/install rate, labor, tax or O&P as a material allowance.
+  Use null when material-only pricing is unavailable; an explicit zero is allowed only if stated.
+- trade matches the owning trade_name; suggested vendor may be omitted if unknown.
+- Before returning, check every source room/category against this list for omitted choices.
+  Return [] only when the source contains no customer-selectable replacement finishes.
+
+4) MATERIAL ALLOWANCE ITEMS (procurement list, Output 2)
 Itemize direct materials trades must procure. Rules:
 - When a component breakdown exists, use exact component quantities; do NOT add extra waste factors.
 - Otherwise apply waste: flooring/tile/trim +10%, drywall sheets +8%, paint/hardware/appliances +0%.
@@ -87,10 +110,10 @@ Itemize direct materials trades must procure. Rules:
 - trade must exactly match the trade_name above.
 - Skip turnkey divisions entirely (carpet, roofing/gutters, siding/exterior, electrical, plumbing, HVAC):
   those subcontractors furnish their own materials.
-- Maximum ~60 rows, deduplicated. If materials cannot be itemized reliably, return an empty array
+- Include all supported materials, deduplicated. If materials cannot be itemized reliably, return an empty array
   instead of inventing rows.
 
-4) OUTPUT
+5) OUTPUT
 Return exactly the schema object described in the developer message. Unknown optional values may be
 omitted, but task_id, trade_name, direct_subtotal and scheduling fields should always be present.`;
 
@@ -138,6 +161,24 @@ export const ESTIMATE_RESPONSE_SCHEMA = {
         required: ['task_id', 'trade_name', 'direct_subtotal', 'suggested_duration_days', 'predecessors'],
       },
     },
+    customer_selections: {
+      type: 'array',
+      description: 'All customer finish choices, including turnkey trades and unpriced choices.',
+      items: {
+        type: 'object',
+        properties: {
+          trade: { type: 'string' },
+          component_code: { type: 'string' },
+          description: { type: 'string' },
+          qty: { type: 'number' },
+          uom: { type: 'string' },
+          allowance_per_unit: { type: ['number', 'null'] },
+          vendor: { type: 'string' },
+          notes: { type: 'string' },
+        },
+        required: ['trade', 'description', 'qty', 'uom', 'allowance_per_unit'],
+      },
+    },
     material_allowances: {
       type: 'array',
       items: {
@@ -155,7 +196,7 @@ export const ESTIMATE_RESPONSE_SCHEMA = {
       },
     },
   },
-  required: ['project_meta', 'trade_sections'],
+  required: ['project_meta', 'trade_sections', 'customer_selections'],
 } as const;
 
 const num = (value: unknown): number => {
@@ -257,13 +298,40 @@ export function normalizeEstimate(raw: unknown): { estimate: EstimateResult; war
         vendor: str(a.vendor) || undefined,
       };
     })
-    .filter((a) => a.description && a.qty > 0 && a.trade)
-    .slice(0, 200);
+    .filter((a) => a.description && a.qty > 0 && a.trade && a.unit_cost >= 0);
+
+  const rawSelections = Array.isArray(obj.customer_selections) ? obj.customer_selections : [];
+  if (!Array.isArray(obj.customer_selections)) {
+    warnings.push('AI omitted the customer selection list; only procurement-derived choices are available. Reprocess the estimate to include turnkey finishes.');
+  }
+  const customer_selection_source: CustomerSelectionInput[] = [];
+  for (const raw of rawSelections) {
+    const input = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+    const description = str(input.description);
+    const trade = str(input.trade);
+    const qty = num(input.qty);
+    if (!description || qty <= 0 || !classifySelectionCategory(trade, description)) {
+      warnings.push(`Customer selection omitted: ${description || 'unnamed item'} has no supported finish or positive quantity.`);
+      continue;
+    }
+    const rawUnit = input.allowance_per_unit;
+    const unit = typeof rawUnit === 'number' ? rawUnit :
+      typeof rawUnit === 'string' && /^\s*\$?\s*\d[\d,]*(?:\.\d+)?\s*$/.test(rawUnit) ? num(rawUnit) : null;
+    customer_selection_source.push({
+      trade, description, qty,
+      component_code: str(input.component_code) || undefined,
+      uom: str(input.uom).toUpperCase() || 'EA',
+      allowance_per_unit: unit !== null && Number.isFinite(unit) && unit >= 0 ? unit : null,
+      vendor: str(input.vendor) || undefined,
+      notes: str(input.notes) || undefined,
+    });
+  }
 
   const estimate: EstimateResult = {
     project_meta,
     trade_sections,
     material_allowances,
+    customer_selection_source,
   };
   return { estimate, warnings };
 }
@@ -447,17 +515,25 @@ export async function processEstimate(
     temperature: 0.1,
     label: 'estimate',
     attempts: 3,
+    requireComplete: true,
   });
+
+  if (!data || typeof data !== 'object' || !Array.isArray((data as Record<string, unknown>).customer_selections)) {
+    throw new Error('AI did not return the required customer selection list. Reprocess the estimate to extract all finish choices.');
+  }
 
   const { estimate, warnings } = normalizeEstimate(data);
   const mined = mineEstimateDollars(estimateText);
   warnings.push(...applyMinedBackfill(estimate, mined).warnings);
   const withBudget = applyBudgetEngine(estimate);
 
-  // Customer-facing selection sheet: derive selection rows from the final
-  // (scaled/reconciled) procurement allowances AFTER the budget engine, so
-  // the customer document reflects the audited numbers exactly.
-  withBudget.customer_selections = buildCustomerSelections(withBudget.material_allowances);
+  // Include independently extracted turnkey choices, using audited procurement
+  // rates where available and keeping source quantities free of added waste.
+  withBudget.customer_selections = buildCustomerSelections(
+    withBudget.material_allowances, withBudget.customer_selection_source
+  );
+  const unpriced = withBudget.customer_selections.filter((item) => item.allowance_status === 'needs_review');
+  if (unpriced.length) warnings.push(`${unpriced.length} customer selection(s) need material allowance pricing confirmed before issuing the sheet.`);
 
   const processWarnings = [...warnings, ...(withBudget.processing?.warnings || [])];
   if (truncated) processWarnings.push('Model response was truncated; JSON recovered via the repair pass.');

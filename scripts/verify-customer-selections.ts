@@ -4,8 +4,9 @@
 // token on the sheet must be an allow-listed allowance figure, and no carrier
 // RCV / O&P / margin language or Xactimate category codes may appear.
 // Run: npx tsx scripts/verify-customer-selections.ts
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { PDFDocument } from 'pdf-lib';
 import { SAMPLE_ESTIMATES } from '../src/services/sampleEstimates.ts';
 import { applyBudgetEngine } from '../src/utils/budgetEngine.ts';
@@ -22,6 +23,7 @@ import { buildCustomerSelectionsPdf } from '../src/utils/customerSelectionsPdf.t
 import { extractPdfText } from '../pdfText.ts';
 import { ESTIMATE_RESPONSE_SCHEMA, normalizeEstimate, processEstimate } from '../xactEngine.ts';
 import { runProcessEstimate } from '../serverRoutines.ts';
+import { findCustomerSelectionCoverageGaps } from '../src/utils/customerSelectionCoverage.ts';
 import type { CustomerSelectionInput, EstimateResult, MaterialAllowanceItem } from '../src/types/estimate.ts';
 
 let failures = 0;
@@ -79,7 +81,7 @@ async function textOverlapPairs(bytes: Uint8Array): Promise<number> {
 }
 
 async function main() {
-  mkdirSync(join('scripts', '__verify_tmp'), { recursive: true });
+  const artifactDir = mkdtempSync(join(tmpdir(), 'customer-selections-verify-'));
   // 1) Deterministic classifier checks against a fixed fixture set.
   const fixtures: MaterialAllowanceItem[] = [
     { trade: 'Flooring', description: 'Luxury Vinyl Plank (LVP)', qty: 100, uom: 'SF', unit_cost: 3.25, extended_cost: 325 },
@@ -221,6 +223,18 @@ async function main() {
     let missingListRejected = false;
     try { await processEstimate('FCV Flooring 1000.00'); } catch { missingListRejected = true; }
     check('AI: omitted selection list cannot be reported as complete', missingListRejected);
+    check('coverage: detects an omitted appliance from the source', findCustomerSelectionCoverageGaps('APP Dishwasher 1 EA, material-only $400.00/EA.', source).includes('dishwasher'));
+    check('coverage: removal-only and credits do not trigger missing choices', findCustomerSelectionCoverageGaps('APP Remove dishwasher ONLY 1 EA\nPLM Credited toilet 1 EA', source).length === 0);
+    let coverageCalls = 0;
+    globalThis.fetch = async () => {
+      coverageCalls++;
+      const content = coverageCalls === 1 ? rawEstimate : { customer_selections: [
+        ...source, { trade: 'Appliances', description: 'Dishwasher', qty: 1, uom: 'EA', allowance_per_unit: 400 },
+      ] };
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) }, finish_reason: 'stop' }] }), { status: 200 });
+    };
+    const recovered = await processEstimate('APP Dishwasher 1 EA, material-only $400.00/EA.');
+    check('coverage: focused review recovers omitted products without duplicates', coverageCalls === 2 && recovered.customer_selections?.length === 4 && recovered.customer_selections.some((item) => item.description === 'Dishwasher'));
     globalThis.fetch = async () => new Response(JSON.stringify({ error: { message: 'Authentication Fails: invalid API key.' } }), { status: 401 });
     const originalError = console.error;
     console.error = () => {};
@@ -299,7 +313,7 @@ Total RCV 6244.00`);
     notes: i === 0 ? longNotes : `Room ${i} - choose color`,
   }));
   const stressBytes = await buildCustomerSelectionsPdf({ ...pipeline, customer_selections: stressItems });
-  writeFileSync(join('scripts', '__verify_tmp', 'out-selections-complete.pdf'), stressBytes);
+  writeFileSync(join(artifactDir, 'out-selections-complete.pdf'), stressBytes);
   const stressText = normalize(await extractPdfText(Buffer.from(stressBytes).toString('base64')));
   check('PDF: full descriptions and room notes retained', stressText.includes('DESCRIPTION-END') && stressText.includes('NOTES-END'));
   check('PDF: all choices across pages retained', stressItems.slice(1).every((item) => stressText.includes(item.description)));
@@ -355,7 +369,7 @@ Total RCV 6244.00`);
       bytes instanceof Uint8Array && bytes.length > 5000,
       `${bytes.length} bytes`
     );
-    const artifact = join('scripts', '__verify_tmp', `out-selections-${key}.pdf`);
+    const artifact = join(artifactDir, `out-selections-${key}.pdf`);
     writeFileSync(artifact, bytes);
 
     const doc = await PDFDocument.load(bytes);

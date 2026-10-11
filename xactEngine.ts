@@ -11,6 +11,7 @@
 import { deepseekJsonWithMeta, resolveModel } from './deepseek.js';
 import { applyBudgetEngine, DIVISION_PROFILES, matchDivision } from './src/utils/budgetEngine.js';
 import { buildCustomerSelections, classifySelectionCategory } from './src/utils/customerSelections.js';
+import { findCustomerSelectionCoverageGaps } from './src/utils/customerSelectionCoverage.js';
 import { mineEstimateDollars } from './estimateTextMiner.js';
 import type { MinedEstimate } from './estimateTextMiner.js';
 import type {
@@ -523,6 +524,50 @@ export async function processEstimate(
   }
 
   const { estimate, warnings } = normalizeEstimate(data);
+  const coverageGaps = findCustomerSelectionCoverageGaps(estimateText, estimate.customer_selection_source || []);
+  let selectionReviewTokens = 0;
+  if (coverageGaps.length) {
+    // A separate selection-only pass prevents the trade-budget taxonomy from
+    // hiding products (for example, appliances without a canonical division).
+    const review = await deepseekJsonWithMeta<unknown>({
+      system: `You extract customer finish choices from restoration estimates.
+Return ONLY a JSON object with customer_selections, using this schema:
+${JSON.stringify(ESTIMATE_RESPONSE_SCHEMA.properties.customer_selections)}
+Read every room and include all replacement finishes and appliances, even when
+subcontractors supply them or no budget trade division exists for that product.
+Each item needs trade, description, qty, uom and allowance_per_unit; optional
+component_code, vendor and notes. Use a plain-language owning trade if needed.
+Preserve the descriptions of the existing choices where they identify the same
+product. Return the COMPLETE corrected list, not only the missing products.
+Exclude removal-only, detach/reset, credited, omitted, cleaning and labor-only work.
+Include replacement material even if its line also includes installation labor.
+Use exact component quantities when available, otherwise installed quantities;
+add no waste. Never count both an estimate line and its component-report equivalent.
+Keep different products, sizes, grades and finishes separate; aggregate identical
+products across rooms and retain their room names and choices in notes.
+Only explicitly supported MATERIAL-ONLY, pre-tax pricing may be allowance_per_unit.
+Never copy a combined installation/labor rate or total RCV. Use null when unknown.
+Never fabricate products or quantities. Check the highlighted coverage gaps against
+the source before returning the complete list.`,
+      user: `Coverage gaps: ${coverageGaps.join(', ')}\nExisting choices:\n${JSON.stringify(estimate.customer_selection_source)}\n\nSOURCE ESTIMATE AND COMPONENT REPORT:\n${estimateText}`,
+      temperature: 0,
+      label: 'customer-selection-review',
+      attempts: 3,
+      requireComplete: true,
+    });
+    const reviewed = review.data as Record<string, unknown> | null;
+    if (!reviewed || !Array.isArray(reviewed.customer_selections)) {
+      throw new Error('The customer selection coverage review did not return a complete list. Reprocess the estimate.');
+    }
+    const corrected = normalizeEstimate({ ...(data as Record<string, unknown>), customer_selections: reviewed.customer_selections });
+    const remaining = findCustomerSelectionCoverageGaps(estimateText, corrected.estimate.customer_selection_source || []);
+    if (remaining.length) {
+      throw new Error(`AI could not verify the customer selections for: ${remaining.join(', ')}. Review the source scope and reprocess; a partial selection sheet was not issued.`);
+    }
+    estimate.customer_selection_source = corrected.estimate.customer_selection_source;
+    warnings.push(...corrected.warnings.filter((warning) => warning.startsWith('Customer selection')));
+    selectionReviewTokens = review.usage?.total_tokens || 0;
+  }
   const mined = mineEstimateDollars(estimateText);
   warnings.push(...applyMinedBackfill(estimate, mined).warnings);
   const withBudget = applyBudgetEngine(estimate);
@@ -541,7 +586,7 @@ export async function processEstimate(
 
   withBudget.processing = {
     model,
-    engine: `${ESTIMATE_ENGINE_VERSION} (attempts=${attempts}, tokens=${usage?.total_tokens ?? 'n/a'})`,
+    engine: `${ESTIMATE_ENGINE_VERSION} (attempts=${attempts}, tokens=${usage?.total_tokens === undefined ? 'n/a' : usage.total_tokens + selectionReviewTokens}, selection_review=${coverageGaps.length > 0})`,
     warnings: processWarnings,
     processed_at: new Date().toISOString(),
     duration_ms: Date.now() - startedAt,

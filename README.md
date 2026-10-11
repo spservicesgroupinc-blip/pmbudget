@@ -100,6 +100,8 @@ roll-up.
   Reprocess older estimates to recover finish choices omitted by the previous extraction.
   Token-limited responses retry rather than accepting partial selection lists. Oversized source
   documents and unreadable component reports return actionable errors instead of dropping content.
+  A source product coverage check requests a focused selection review when a visible product
+  was omitted by the budget extraction, and rejects a still-incomplete result.
   Run `npm run verify:selections` for offline checks, or append `-- --live` to verify a real AI call.
 
 ## HTTP API

@@ -24,6 +24,7 @@ import { extractPdfText } from '../pdfText.ts';
 import { ESTIMATE_RESPONSE_SCHEMA, normalizeEstimate, processEstimate } from '../xactEngine.ts';
 import { runProcessEstimate } from '../serverRoutines.ts';
 import { findCustomerSelectionCoverageGaps } from '../src/utils/customerSelectionCoverage.ts';
+import { recoverCustomerSelectionPrices } from '../customerSelectionPricing.ts';
 import type { CustomerSelectionInput, EstimateResult, MaterialAllowanceItem } from '../src/types/estimate.ts';
 
 let failures = 0;
@@ -171,6 +172,9 @@ async function main() {
     fixtures[0], { ...fixtures[0], unit_cost: 4 },
   ], [source[0]]);
   check('pricing: conflicting audited rates require review', uncertain[0].allowance_status === 'needs_review');
+  check('pricing: explicit source allowance survives budget scaling and conflicting procurement rates', buildCustomerSelections([
+    fixtures[0], { ...fixtures[0], unit_cost: 4 },
+  ], [{ ...source[0], allowance_per_unit: 2.75 }])[0].allowance_per_unit === 2.75);
   check('classifier: invalid negative and nonfinite rates discarded', buildCustomerSelections([
     { ...fixtures[0], unit_cost: -1 }, { ...fixtures[0], unit_cost: NaN }, { ...fixtures[0], qty: Infinity },
   ]).length === 0);
@@ -194,6 +198,12 @@ async function main() {
   check('normalization: no silent 200-row cutoff', many.estimate.material_allowances?.length === 240);
   const unknown = normalizeEstimate({ ...rawEstimate, customer_selections: [{ ...source[2], allowance_per_unit: 'unknown' }] });
   check('normalization: malformed price stays unknown', unknown.estimate.customer_selection_source?.[0].allowance_per_unit === null);
+  check('normalization: extended material amount divided by exact quantity', normalizeEstimate({
+    ...rawEstimate, customer_selections: [{ ...source[0], material_total: '$130.00' }],
+  }).estimate.customer_selection_source?.[0].allowance_per_unit === 3.25);
+  check('normalization: missing procurement price cannot become a free material', normalizeEstimate({
+    ...rawEstimate, material_allowances: [{ ...fixtures[0], unit_cost: 'unknown' }],
+  }).estimate.material_allowances?.length === 0);
 
   // Exercise the real server pipeline with the external model response stubbed.
   const originalFetch = globalThis.fetch;
@@ -205,6 +215,7 @@ async function main() {
     return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(rawEstimate) }, finish_reason: 'stop' }] }), { status: 200 });
   };
   let pipeline: EstimateResult;
+  let unresolved: EstimateResult;
   try {
     pipeline = await processEstimate('FCV Flooring 1000.00\nPLM Faucet 1000.00\nTotal RCV 2000.00');
     const oversized = await runProcessEstimate({ textContent: 'x'.repeat(250001) });
@@ -235,6 +246,40 @@ async function main() {
     };
     const recovered = await processEstimate('APP Dishwasher 1 EA, material-only $400.00/EA.');
     check('coverage: focused review recovers omitted products without duplicates', coverageCalls === 2 && recovered.customer_selections?.length === 4 && recovered.customer_selections.some((item) => item.description === 'Dishwasher'));
+    let pricingCalls = 0;
+    const priceSource = 'Component report\nDescription | Qty | Unit | Material Total | Labor\nBathroom faucet | 2 | EA | 330.00 | 80.00\nBedroom carpet | 20 | SY | 405.00 | 100.00\nPendant lighting | 1 | EA | 92.00 | 25.00';
+    const priceSelections = [
+      { ...source[2], qty: 2 },
+      { ...source[3], qty: 180, allowance_per_unit: null },
+      { trade: 'Electrical', description: 'Pendant lighting', qty: 1, uom: 'EA', allowance_per_unit: null },
+    ];
+    globalThis.fetch = async () => {
+      pricingCalls++;
+      const content = pricingCalls === 1 ? { ...rawEstimate, material_allowances: [], customer_selections: priceSelections } : { prices: [
+        { selection_index: 0, material_total: 330, material_quantity: 2, material_uom: 'EA', evidence: priceSource },
+        { selection_index: 1, material_total: 405, material_quantity: 20, material_uom: 'SY', evidence: priceSource },
+        { selection_index: 2, material_unit_cost: 92, material_uom: 'EA', evidence: priceSource },
+      ] };
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) }, finish_reason: 'stop' }] }), { status: 200 });
+    };
+    const priced = await processEstimate(priceSource);
+    check('pricing pipeline: second pass recovers all three missing material amounts', pricingCalls === 2 && Boolean(priced.customer_selections?.every((item) => item.allowance_status === 'confirmed')));
+    check('pricing pipeline: material total excludes separately listed labor', priced.customer_selections?.[0].allowance_per_unit === 165);
+    check('pricing pipeline: square-yard price converted to square feet', priced.customer_selections?.[1].allowance_per_unit === 2.25 && priced.customer_selections[1].allowance_total === 405);
+    check('pricing pipeline: recovered allowances persist when rebuilding', JSON.stringify(buildCustomerSelections(priced.material_allowances, priced.customer_selection_source)) === JSON.stringify(priced.customer_selections));
+    check('pricing pipeline: customer PDF can be generated after automatic recovery', (await buildCustomerSelectionsPdf(priced)).length > 5000);
+    let unresolvedCalls = 0;
+    globalThis.fetch = async () => {
+      unresolvedCalls++;
+      const content = unresolvedCalls === 1 ? { ...rawEstimate, material_allowances: [], customer_selections: [source[2]] } : { prices: [
+        { selection_index: 0, material_unit_cost: 165, material_uom: 'EA', evidence: 'Invented material price 165.00' },
+        { selection_index: 0, material_unit_cost: 1000, material_uom: 'EA', evidence: 'PLM Faucet material 999.00' },
+        { selection_index: 9, material_unit_cost: 999, material_uom: 'EA', evidence: 'PLM Faucet material 999.00' },
+      ] };
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) }, finish_reason: 'stop' }] }), { status: 200 });
+    };
+    unresolved = await processEstimate('PLM Faucet material 999.00');
+    check('pricing pipeline: fabricated excerpts, unsupported amounts and invalid indices rejected', unresolvedCalls === 2 && unresolved.customer_selections?.[0].allowance_status === 'needs_review');
     globalThis.fetch = async () => new Response(JSON.stringify({ error: { message: 'Authentication Fails: invalid API key.' } }), { status: 401 });
     const originalError = console.error;
     console.error = () => {};
@@ -249,12 +294,43 @@ async function main() {
   }
   check('AI prompt: every room, turnkey choices, no row limit', prompt.includes('EVERY room') && prompt.includes('turnkey') && prompt.includes('Do not impose a row limit'));
   check('pipeline: source choices survive budget turnkey filtering', pipeline.customer_selections?.length === 3 && pipeline.material_allowances?.length === 1);
-  check('pipeline: missing price produces visible warning', Boolean(pipeline.processing?.warnings?.some((warning) => warning.includes('pricing confirmed'))));
+  check('pipeline: turnkey price preserved before procurement filtering', pipeline.customer_selections?.find((item) => /faucet/i.test(item.description))?.allowance_per_unit === 100);
+  check('pipeline: missing price produces named source-review warning', Boolean(unresolved.processing?.warnings?.some((warning) => warning.includes('Bathroom faucet'))));
   check('rebuild: all originally extracted choices preserved', JSON.stringify(buildCustomerSelections(pipeline.material_allowances, pipeline.customer_selection_source)) === JSON.stringify(pipeline.customer_selections));
   let refused = false;
-  try { await buildCustomerSelectionsPdf(pipeline); } catch { refused = true; }
+  try { await buildCustomerSelectionsPdf(unresolved); } catch { refused = true; }
   check('PDF: unconfirmed pricing cannot be issued', refused);
 
+  if (process.argv.includes('--live-pricing')) {
+    const { default: dotenv } = await import('dotenv');
+    dotenv.config({ path: ['env/.env.local', 'env/.env', '.env.local', '.env'], quiet: true });
+    let pricingResponse = '';
+    globalThis.fetch = async (...args) => {
+      const response = await originalFetch(...args);
+      pricingResponse = await response.clone().text();
+      return response;
+    };
+    const result = await recoverCustomerSelectionPrices(`Component breakdown report (pre-tax)
+Description | Actual Cost Qty | Unit | Material Total | Labor Total
+Bathroom faucet | 2 | EA | 330.00 | 80.00
+Bedroom carpet | 20 | SY | 405.00 | 100.00
+Pendant lighting | 2 | EA | 184.00 | 50.00
+
+Estimate line without component breakdown:
+Interior door slab | 1 EA | combined supply/install UNIT PRICE 260.00 | TOTAL 260.00`, [
+      { ...source[2], qty: 2 },
+      { ...source[3], qty: 180, allowance_per_unit: null },
+      { trade: 'Electrical', description: 'Pendant lighting', qty: 2, uom: 'EA', allowance_per_unit: null },
+      { trade: 'Finish Trim & Doors', description: 'Interior door slab', qty: 1, uom: 'EA', allowance_per_unit: null },
+    ]);
+    globalThis.fetch = originalFetch;
+    if (result.recovered !== 3) console.log('Synthetic pricing diagnostics:', JSON.stringify({ result, response: pricingResponse }));
+    check('live pricing: faucet material total recovered as 165/EA', result.selections[0].allowance_per_unit === 165);
+    check('live pricing: carpet component SY converted to 2.25/SF', result.selections[1].allowance_per_unit === 2.25);
+    check('live pricing: pendant material total recovered as 92/EA', result.selections[2].allowance_per_unit === 92);
+    check('live pricing: combined supply/install price stays unknown', result.selections[3].allowance_per_unit === null);
+    check('live pricing: all three supported missing amounts recovered', result.recovered === 3);
+  }
   if (process.argv.includes('--live')) {
     const { default: dotenv } = await import('dotenv');
     dotenv.config({ path: ['env/.env.local', 'env/.env', '.env.local', '.env'], quiet: true });

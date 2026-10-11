@@ -12,6 +12,7 @@ import { deepseekJsonWithMeta, resolveModel } from './deepseek.js';
 import { applyBudgetEngine, DIVISION_PROFILES, matchDivision } from './src/utils/budgetEngine.js';
 import { buildCustomerSelections, classifySelectionCategory } from './src/utils/customerSelections.js';
 import { findCustomerSelectionCoverageGaps } from './src/utils/customerSelectionCoverage.js';
+import { recoverCustomerSelectionPrices } from './customerSelectionPricing.js';
 import { mineEstimateDollars } from './estimateTextMiner.js';
 import type { MinedEstimate } from './estimateTextMiner.js';
 import type {
@@ -21,7 +22,7 @@ import type {
   TradeSection,
 } from './src/types/estimate.js';
 
-export const ESTIMATE_ENGINE_VERSION = 'budget-engine-v3-selections';
+export const ESTIMATE_ENGINE_VERSION = 'budget-engine-v4-selection-pricing';
 
 const DIVISION_TABLE = `- Demolition & Hauling | DEM, DMO, WTR | In-House Self-Perform | direct labor = 72% of retail labor; consumables only
 - Framing & Rough Carpentry | FRM | In-House Self-Perform | direct labor = 72%
@@ -96,6 +97,10 @@ trade is turnkey or its material price is absent. Do not impose a row limit.
 - Use the same plain-language product description and component_code as material_allowances
   for matching products. Include rooms/areas and the choice needed in notes.
 - allowance_per_unit is MATERIAL-ONLY, pre-tax pricing explicitly supported by the source.
+  Read component pricing tables and Material/Mat columns, not just the estimate's
+  combined UNIT PRICE. If only an extended material amount is shown, return it as
+  material_total and divide by that material quantity to obtain allowance_per_unit.
+  Convert component units to the selection unit when needed (1 SY = 9 SF).
   NEVER use a combined supply/install rate, labor, tax or O&P as a material allowance.
   Use null when material-only pricing is unavailable; an explicit zero is allowed only if stated.
 - trade matches the owning trade_name; suggested vendor may be omitted if unknown.
@@ -174,6 +179,7 @@ export const ESTIMATE_RESPONSE_SCHEMA = {
           qty: { type: 'number' },
           uom: { type: 'string' },
           allowance_per_unit: { type: ['number', 'null'] },
+          material_total: { type: ['number', 'null'], description: 'Extended material-only pre-tax amount for this selection quantity, never combined line total.' },
           vendor: { type: 'string' },
           notes: { type: 'string' },
         },
@@ -211,6 +217,11 @@ const num = (value: unknown): number => {
 const optNum = (value: unknown): number | undefined => {
   const parsed = num(value);
   return parsed !== 0 ? parsed : undefined;
+};
+const materialPrice = (value: unknown): number | null => {
+  const parsed = typeof value === 'number' ? value :
+    typeof value === 'string' && /^\s*\$?\s*(?:\d[\d,]*(?:\.\d+)?|\.\d+)\s*$/.test(value) ? num(value) : null;
+  return parsed !== null && Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 };
 const str = (value: unknown): string =>
   value === undefined || value === null ? '' : String(value).trim();
@@ -284,11 +295,12 @@ export function normalizeEstimate(raw: unknown): { estimate: EstimateResult; war
 
   const rawAllowances = Array.isArray(obj.material_allowances) ? obj.material_allowances : [];
   const material_allowances: MaterialAllowanceItem[] = rawAllowances
-    .map((item) => {
+    .flatMap((item) => {
       const a = (item && typeof item === 'object' ? item : {}) as Record<string, unknown>;
       const qty = num(a.qty);
-      const unit = num(a.unit_cost);
-      return {
+      const unit = materialPrice(a.unit_cost);
+      if (unit === null) return [];
+      return [{
         trade: str(a.trade),
         component_code: str(a.component_code) || undefined,
         description: str(a.description),
@@ -297,7 +309,7 @@ export function normalizeEstimate(raw: unknown): { estimate: EstimateResult; war
         unit_cost: unit,
         extended_cost: Math.round(qty * unit * 100) / 100,
         vendor: str(a.vendor) || undefined,
-      };
+      }];
     })
     .filter((a) => a.description && a.qty > 0 && a.trade && a.unit_cost >= 0);
 
@@ -315,9 +327,9 @@ export function normalizeEstimate(raw: unknown): { estimate: EstimateResult; war
       warnings.push(`Customer selection omitted: ${description || 'unnamed item'} has no supported finish or positive quantity.`);
       continue;
     }
-    const rawUnit = input.allowance_per_unit;
-    const unit = typeof rawUnit === 'number' ? rawUnit :
-      typeof rawUnit === 'string' && /^\s*\$?\s*\d[\d,]*(?:\.\d+)?\s*$/.test(rawUnit) ? num(rawUnit) : null;
+    let unit = materialPrice(input.allowance_per_unit);
+    const total = materialPrice(input.material_total);
+    if (unit === null && total !== null) unit = total / qty;
     customer_selection_source.push({
       trade, description, qty,
       component_code: str(input.component_code) || undefined,
@@ -546,6 +558,8 @@ add no waste. Never count both an estimate line and its component-report equival
 Keep different products, sizes, grades and finishes separate; aggregate identical
 products across rooms and retain their room names and choices in notes.
 Only explicitly supported MATERIAL-ONLY, pre-tax pricing may be allowance_per_unit.
+Read material columns and component pricing tables. When only a material total is
+shown, divide by the matching material quantity, converting units when necessary.
 Never copy a combined installation/labor rate or total RCV. Use null when unknown.
 Never fabricate products or quantities. Check the highlighted coverage gaps against
 the source before returning the complete list.`,
@@ -568,6 +582,17 @@ the source before returning the complete list.`,
     warnings.push(...corrected.warnings.filter((warning) => warning.startsWith('Customer selection')));
     selectionReviewTokens = review.usage?.total_tokens || 0;
   }
+  // Preserve source material prices before turnkey filtering and procurement
+  // budget scaling. Customer allowances are independent of internal buyout budgets.
+  estimate.customer_selection_source = (estimate.customer_selection_source || []).map((input) => {
+    if (input.allowance_per_unit !== null) return input;
+    const matched = buildCustomerSelections(estimate.material_allowances, [input])[0];
+    return matched?.allowance_status === 'confirmed' ? { ...input, allowance_per_unit: matched.allowance_per_unit } : input;
+  });
+  const pricingReviewNeeded = estimate.customer_selection_source.some((item) => item.allowance_per_unit === null);
+  const pricing = await recoverCustomerSelectionPrices(estimateText, estimate.customer_selection_source);
+  estimate.customer_selection_source = pricing.selections;
+  selectionReviewTokens += pricing.tokens;
   const mined = mineEstimateDollars(estimateText);
   warnings.push(...applyMinedBackfill(estimate, mined).warnings);
   const withBudget = applyBudgetEngine(estimate);
@@ -578,7 +603,7 @@ the source before returning the complete list.`,
     withBudget.material_allowances, withBudget.customer_selection_source
   );
   const unpriced = withBudget.customer_selections.filter((item) => item.allowance_status === 'needs_review');
-  if (unpriced.length) warnings.push(`${unpriced.length} customer selection(s) need material allowance pricing confirmed before issuing the sheet.`);
+  if (unpriced.length) warnings.push(`Material pricing confirmed for all other selections; source pricing review could not verify material-only amounts for: ${unpriced.map((item) => item.description).join(', ')}. Supply a component breakdown or confirm those allowances before issuing the sheet.`);
 
   const processWarnings = [...warnings, ...(withBudget.processing?.warnings || [])];
   if (truncated) processWarnings.push('Model response was truncated; JSON recovered via the repair pass.');
@@ -586,7 +611,7 @@ the source before returning the complete list.`,
 
   withBudget.processing = {
     model,
-    engine: `${ESTIMATE_ENGINE_VERSION} (attempts=${attempts}, tokens=${usage?.total_tokens === undefined ? 'n/a' : usage.total_tokens + selectionReviewTokens}, selection_review=${coverageGaps.length > 0})`,
+    engine: `${ESTIMATE_ENGINE_VERSION} (attempts=${attempts}, tokens=${usage?.total_tokens === undefined ? 'n/a' : usage.total_tokens + selectionReviewTokens}, selection_review=${coverageGaps.length > 0}, pricing_review=${pricingReviewNeeded})`,
     warnings: processWarnings,
     processed_at: new Date().toISOString(),
     duration_ms: Date.now() - startedAt,

@@ -152,9 +152,11 @@ export function buildCustomerSelections(
     // A single audited rate is safe to reuse; conflicting rates need review.
     const audited = rates.size === 1 ? matches[0] : undefined;
     const extracted = input.allowance_per_unit;
-    const confirmed = rates.size <= 1 && (Boolean(audited) ||
-      (typeof extracted === 'number' && Number.isFinite(extracted) && extracted >= 0));
-    const unit = confirmed ? round2(audited?.unit_cost ?? extracted!) : 0;
+    // Explicit source material pricing must survive procurement budget scaling
+    // and conflicts between procurement rows from different rooms.
+    const hasExtracted = typeof extracted === 'number' && Number.isFinite(extracted) && extracted >= 0;
+    const confirmed = hasExtracted || Boolean(audited);
+    const unit = confirmed ? round2(hasExtracted ? extracted : audited!.unit_cost) : 0;
     items.push({
       id: '', category, trade: input.trade.trim(), component_code: input.component_code,
       description: input.description.trim(), qty: input.qty,

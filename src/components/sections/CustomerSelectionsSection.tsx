@@ -264,7 +264,7 @@ export const CustomerSelectionsSection: React.FC<CustomerSelectionsSectionProps>
         )}
         <span>
           {unpricedCount > 0
-            ? `${unpricedCount} selection item(s) need a material allowance — enter the price in $/Unit before generating the customer sheet.`
+            ? `${unpricedCount} selection item(s) have no verified material-only price. Reprocess with the component breakdown to extract these amounts, or confirm the allowance in $/Unit.`
             : items.length > 0
             ? `Customer selections ready — review and adjust the ${items.length} allowance item(s), then generate the allowance sheet.`
             : 'No customer selections yet — upload the estimate with its optional Component Breakdown Report to populate selection allowances automatically, or add items manually.'}

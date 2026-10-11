@@ -117,6 +117,11 @@ quantities" rule drives the material allowance roll-up.
   Printed component totals are preserved when displayed quantities are rounded; editing quantity
   or rate recomputes the allowance. This prevents duplicate paint rows and procurement budget
   scaling from changing the customer's source material allowance.
+  Every AI pass shares the same Xactimate selection rules across job types. Different grades,
+  sizes, finishes and customer choices stay separate; a broad trade/category is insufficient
+  evidence for a product match. Ambiguous component allocations use the AI matching path.
+  Regression checks cover kitchen rebuilds, bedroom/bath repairs, exterior storm repairs,
+  mixed trades, and different finishes alongside the original repair-PDF regression.
   Token-limited responses retry rather than accepting partial selection lists. Oversized source
   documents and unreadable component reports return actionable errors instead of dropping content.
   A source product coverage check (flooring, cabinets, paint, trim, appliances, fixtures, ...)
@@ -125,7 +130,7 @@ quantities" rule drives the material allowance roll-up.
   re-reads BOTH uploaded documents for choices found in either one, and is consumed whenever
   the budget pass omits the list or drops a visible product; it is cancelled when nothing is
   missing. On serverless hosts the AI phase is bounded by `PROCESS_TIME_BUDGET_MS` (default
-  50s on Vercel) so an oversized run fails with an actionable message instead of a 504 gateway
+  270s on Vercel within a 300s function limit) so a slow run fails with a structured error instead of a bare 504 gateway
   timeout; residual gaps trigger one targeted sequential rerun only while budget remains, and
   a still-incomplete result is rejected before any partial sheet can be issued.
   Run `npm run verify:selections` for offline checks, or append `-- --live` to verify a real AI call.

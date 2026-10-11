@@ -25,7 +25,7 @@ import type {
   TradeSection,
 } from './src/types/estimate.js';
 
-export const ESTIMATE_ENGINE_VERSION = 'budget-engine-v6-source-selections';
+export const ESTIMATE_ENGINE_VERSION = 'budget-engine-v7-shared-selection-rules';
 
 const DIVISION_TABLE = `- Demolition & Hauling | DEM, DMO, WTR | In-House Self-Perform | direct labor = 72% of retail labor; consumables only
 - Framing & Rough Carpentry | FRM | In-House Self-Perform | direct labor = 72%
@@ -541,15 +541,15 @@ export interface ProcessEstimateResult extends EstimateResult {}
 /** Full pipeline: LLM extraction -> normalization -> deterministic budget engine. */
 export async function processEstimate(
   estimateText: string,
-  opts: { userPrompt?: string } = {}
+  opts: { userPrompt?: string; startedAt?: number } = {}
 ): Promise<ProcessEstimateResult> {
-  const startedAt = Date.now();
+  const startedAt = opts.startedAt ?? Date.now();
   const userPrompt =
     opts.userPrompt ||
     'Process this Xactimate estimate into subcontractor trade packages, the master budget inputs and Gantt dependency schedule.';
 
   // Serverless hosts (Vercel) terminate the request at the configured
-  // maxDuration (60s in vercel.json) with a bare 504 gateway timeout. Bound
+  // maxDuration (300s for this endpoint in vercel.json) with a bare 504 gateway timeout. Bound
   // the AI phase so the pipeline instead stops cleanly and returns an
   // actionable error while keeping every result it already computed. Local
   // dev has no such limit, so the budget only applies where it matters.
@@ -558,7 +558,7 @@ export async function processEstimate(
     Number.isFinite(configuredBudget) && configuredBudget > 0
       ? configuredBudget
       : process.env.VERCEL
-        ? 50_000
+        ? 270_000
         : 0;
   const deadline = timeBudgetMs > 0 ? startedAt + timeBudgetMs : undefined;
   const sourceSelections = extractXactimateSelectionSource(estimateText);

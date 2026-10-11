@@ -215,6 +215,7 @@ async function main() {
   process.env.DEEPSEEK_API_KEY = 'offline-verification';
 
   type PromptKind = 'main' | 'rerun' | 'pricing' | 'repair';
+  const selectionPrompts: Partial<Record<PromptKind, string[]>> = {};
   interface StubReply { content: unknown; finishReason?: string; }
   const promptKind = (init?: { body?: unknown }): PromptKind => {
     let messages: Array<{ role?: string; content?: string }> = [];
@@ -238,6 +239,8 @@ async function main() {
     globalThis.fetch = async (_url, init) => {
       const kind = promptKind(init);
       counters[kind]++;
+      const messages = JSON.parse(String(init?.body || '{}')).messages || [];
+      (selectionPrompts[kind] ||= []).push(messages.find((message: { role?: string }) => message.role === 'system')?.content || '');
       if (kind === 'main') prompt = String(init?.body || '');
       const reply = handlers[kind]?.(counters[kind]) ?? { content: rawEstimate };
       return new Response(
@@ -329,6 +332,34 @@ async function main() {
     try { await processEstimate('FCV Flooring 1000.00'); } catch (err) { budgetRejected = err instanceof Error && /time budget/i.test(err.message); }
     delete process.env.PROCESS_TIME_BUDGET_MS;
     check('budget: exhausted server time budget fails fast with an actionable error', budgetRejected);
+    process.env.PROCESS_TIME_BUDGET_MS = '1';
+    const savedConsoleError = console.error;
+    console.error = () => {};
+    let timeoutResult;
+    try { timeoutResult = await runProcessEstimate({ textContent: 'FCV Flooring 1000.00' }); }
+    finally { console.error = savedConsoleError; delete process.env.PROCESS_TIME_BUDGET_MS; }
+    check('API: deadline returns structured retryable 504 instead of asking the user to change server settings', timeoutResult?.status === 504 && JSON.stringify(timeoutResult.body).includes('PROCESS_TIMEOUT') && !JSON.stringify(timeoutResult.body).includes('split'));
+    const realNow = Date.now;
+    const savedVercel = process.env.VERCEL;
+    const savedBudget = process.env.PROCESS_TIME_BUDGET_MS;
+    let simulatedElapsed = 0;
+    const simulatedStart = realNow();
+    try {
+      process.env.VERCEL = '1';
+      delete process.env.PROCESS_TIME_BUDGET_MS;
+      Date.now = () => simulatedStart + simulatedElapsed;
+      globalThis.fetch = async () => {
+        simulatedElapsed += 65_000;
+        return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(rawEstimate) }, finish_reason: 'stop' }] }), { status: 200 });
+      };
+      let completed = false;
+      try { completed = Boolean((await processEstimate('FCV Flooring 1000.00\nPLM Faucet 1000.00')).customer_selections?.length); } catch { /* failed deadline reproduced */ }
+      check('budget: hosted processing tolerates AI calls exceeding the former 50-second limit', completed);
+    } finally {
+      Date.now = realNow;
+      if (savedVercel === undefined) delete process.env.VERCEL; else process.env.VERCEL = savedVercel;
+      if (savedBudget === undefined) delete process.env.PROCESS_TIME_BUDGET_MS; else process.env.PROCESS_TIME_BUDGET_MS = savedBudget;
+    }
     globalThis.fetch = async () => new Response(JSON.stringify({ error: { message: 'Authentication Fails: invalid API key.' } }), { status: 401 });
     const originalError = console.error;
     console.error = () => {};
@@ -342,6 +373,9 @@ async function main() {
     else process.env.DEEPSEEK_API_KEY = originalKey;
   }
   check('AI prompt: every room, turnkey choices, no row limit', prompt.includes('EVERY room') && prompt.includes('turnkey') && prompt.includes('Do not impose a row limit'));
+  for (const kind of ['main', 'rerun', 'pricing'] as const) {
+    check(`AI ${kind}: shared material/labor table and product-matching rules`, Boolean(selectionPrompts[kind]?.length) && selectionPrompts[kind]!.every((system) => system.includes('MATERIAL COMPONENTS') && system.includes('LABOR COMPONENTS') && system.includes('same category is not a product match')));
+  }
   check('AI prompt: selection data explicitly read from either or both uploaded documents', prompt.includes('EITHER or BOTH') && prompt.includes('COMPONENT BREAKDOWN REPORT') && prompt.includes('XACTIMATE ESTIMATE'));
   check('pipeline: source choices survive budget turnkey filtering', pipeline.customer_selections?.length === 3 && pipeline.material_allowances?.length === 1);
   check('pipeline: turnkey price preserved before procurement filtering', pipeline.customer_selections?.find((item) => /faucet/i.test(item.description))?.allowance_per_unit === 100);

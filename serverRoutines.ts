@@ -56,6 +56,7 @@ export async function runProcessEstimate(payload: {
   filename?: unknown;
   componentsFilename?: unknown;
 }): Promise<RoutineResult> {
+  const startedAt = Date.now();
   try {
     const {
       pdfBase64,
@@ -144,6 +145,7 @@ export async function runProcessEstimate(payload: {
     // budget pass drops the list or omits a source-visible product.
     const estimate = await processEstimate(sourceText, {
       userPrompt: typeof prompt === 'string' && prompt.trim() ? prompt : undefined,
+      startedAt,
     });
     estimate.source_filename = estimate.source_filename || sourceLabel;
     if (componentLabel) estimate.components_filename = estimate.components_filename || componentLabel;
@@ -158,13 +160,15 @@ export async function runProcessEstimate(payload: {
         body: { error: 'DeepSeek rejected the configured API key. Update DEEPSEEK_API_KEY in env/.env.local (or the hosting environment), restart the server, and reprocess the estimate.' },
       };
     }
+    const timedOut = name === 'AbortError' || name === 'DeepSeekDeadlineError';
     return {
-      status: 500,
+      status: timedOut ? 504 : 500,
       body: {
         error:
-          name === 'AbortError' || name === 'DeepSeekDeadlineError'
-            ? 'The AI request ran out of time before finishing. Reprocess the estimate; if it keeps timing out, raise PROCESS_TIME_BUDGET_MS or split the source documents.'
+          timedOut
+            ? 'Estimate processing timed out before all required data could be verified. Please try the upload again.'
             : message || 'Failed to process Xactimate estimate.',
+        ...(timedOut ? { error_code: 'PROCESS_TIMEOUT', retryable: true } : {}),
       },
     };
   }

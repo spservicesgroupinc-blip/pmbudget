@@ -184,6 +184,38 @@ async function main() {
   check('Editing component quantity recomputes the allowance', selectionAllowanceTotal({ ...merged.customer_selections![0], qty: 2 }) === 114.36);
   check('Ambiguous component products keep the AI matching path', extractXactimateSelectionSource(both.replace('PNTL', 'PNTALT Enamel paint 1.00 GL @ 30.000 30.00\nPNTL')) === null);
   check('Invalid component totals cannot be marked verified', extractXactimateSelectionSource(both.replace('63.41*', '999.00*')) === null);
+  const diverseJobs = [
+    { name: 'Kitchen rebuild', products: [
+      ['CABBASE', 'Base cabinets - shaker', 8, 'LF', 150],
+      ['CTRGRAN', 'Granite countertop', 12, 'SF', 55],
+      ['PLMFAU', 'Kitchen faucet', 1, 'EA', 165],
+      ['APPDISH', 'Dishwasher', 1, 'EA', 400],
+    ] },
+    { name: 'Bedroom and bathroom repairs', products: [
+      ['FCCCAR', 'Bedroom carpet', 20, 'SY', 22.5],
+      ['FCTPOR', 'Porcelain tile', 25, 'SF', 4],
+      ['PLMSINK', 'Bathroom sink', 1, 'EA', 120],
+      ['ELEPEND', 'Pendant lighting', 2, 'EA', 80],
+      ['DORSLAB', 'Interior door slab', 1, 'EA', 90],
+    ] },
+    { name: 'Exterior storm repairs', products: [
+      ['SDGVIN', 'Vinyl siding', 100, 'SF', 3],
+      ['RFGSHIN', 'Architectural shingle', 2, 'SQ', 120],
+      ['WDWWIN', 'Replacement window', 2, 'EA', 200],
+    ] },
+  ];
+  for (const job of diverseJobs) {
+    const source = `${estimateDocumentHeader('generic.pdf')}\n${job.name} Height: 8'\nDESCRIPTION QTY REMOVE REPLACE TAX O&P TOTAL\n` +
+      job.products.map(([code, description, qty, unit, rate], index) => `${index + 1}. ${description} ${Number(qty).toFixed(2)} ${unit} 0.00 ${(Number(rate) + 10).toFixed(2)} 0.00 0.00 ${(Number(qty) * (Number(rate) + 10)).toFixed(2)}`).join('\n') +
+      `\nTotals: ${job.name}\n${componentDocumentHeader('generic-components.pdf')}\nMATERIAL COMPONENTS\nCode Description Quantity @ Unit Price Total\n` +
+      job.products.map(([code, description, qty, unit, rate]) => `${code} ${description} ${qty} ${unit} @ ${Number(rate).toFixed(3)} ${(Number(qty) * Number(rate)).toFixed(2)}`).join('\n') + '\nTotal 9999.00';
+    const inventory = extractXactimateSelectionSource(source);
+    check(`${job.name}: all products use component quantities and prices once`, inventory?.length === job.products.length && job.products.every(([code, description, qty, unit, rate]) => inventory.some((item) => item.component_code === code && item.qty === qty && item.uom === unit && item.allowance_per_unit === rate)));
+    const result = await pipelineWithModelChoices(source, []);
+    check(`${job.name}: customer selections survive an empty AI list across trades`, result.customer_selections?.length === job.products.length && result.customer_selections.every((item) => item.allowance_status === 'confirmed'));
+  }
+  const variants = `${estimateDocumentHeader('different-finishes.pdf')}\nRoom Height: 8'\nDESCRIPTION QTY REMOVE REPLACE TAX O&P TOTAL\n1. Luxury vinyl plank flooring - oak premium 20.00 SF 0.00 8.00 0.00 0.00 160.00\n2. Luxury vinyl plank flooring - walnut economy 30.00 SF 0.00 7.00 0.00 0.00 210.00\nTotals: Room\n${componentDocumentHeader('components.pdf')}\nMATERIAL COMPONENTS\nCode Description Quantity @ Unit Price Total\nFCVLVP Luxury vinyl plank flooring 50 SF @ 3.000 150.00\nTotal 150.00`;
+  check('Different finishes cannot be collapsed onto one generic component product', extractXactimateSelectionSource(variants) === null);
   const sheet = await extractPdfText(Buffer.from(await buildCustomerSelectionsPdf(merged)).toString('base64'));
   check('Joined material allowance exports with printed source prices and all room scope notes', sheet.includes('$63.41') && sheet.includes('$67.85') && paints.every((paint) => sheet.replace(/\s+/g, ' ').includes(paint.description)));
   if (failures) process.exitCode = 1;

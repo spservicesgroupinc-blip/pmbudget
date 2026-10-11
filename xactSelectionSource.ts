@@ -19,7 +19,7 @@ function scopeSelections(sourceText: string): CustomerSelectionInput[] | null {
 
 function family(description: string): string {
   const category = classifySelectionCategory('', description) || 'Other';
-  const product = description.match(/\b(stain|wallpaper|wallcovering|carpet|vinyl|hardwood|laminate|countertop|cabinet|faucet|sink|toilet)\b/i)?.[1]?.toLowerCase() || '';
+  const product = description.match(/\b(stain|wallpaper|wallcovering|carpet|vinyl|hardwood|laminate|countertops?|cabinets?|faucets?|sinks?|toilets?|windows?|shingles?|siding|doors?|pendants?|chandeliers?|sconces?|fans?)\b/i)?.[1]?.toLowerCase().replace(/s$/, '') || '';
   return `${category}:${product}`;
 }
 
@@ -66,6 +66,15 @@ export function extractXactimateSelectionSource(sourceText: string): CustomerSel
   // More than one possible material for a scope requires the model's grade/
   // finish matching; never attach every area to multiple alternative products.
   if ((scope || []).some((item) => components.filter((component) => family(component.description) === family(item.description)).length > 1)) return null;
+  // Family matching alone cannot merge two distinct finishes onto a generic
+  // component. Plain paint applications are compatible scope for one paint;
+  // named finishes, grades or colors need the AI's exact product matching.
+  for (const component of components) {
+    const matching = (scope || []).filter((item) => family(item.description) === family(component.description));
+    const descriptions = new Set(matching.map((item) => item.description.toLowerCase()));
+    const plainPaint = matching.every((item) => /^Paint (?:the surface area|baseboard|casing|walls?|ceilings?)\s*-\s*(?:one|two|three|\d+) coats?$/i.test(item.description));
+    if (descriptions.size > 1 && !plainPaint) return null;
+  }
   const joined = components.map((component) => ({ ...component,
     notes: [component.notes, ...(scope || []).filter((item) => family(item.description) === family(component.description))
       .map((item) => `${item.notes} ${item.description}: ${item.qty} ${item.uom}.`)].filter(Boolean).join(' ') }));

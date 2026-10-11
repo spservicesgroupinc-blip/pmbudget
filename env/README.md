@@ -37,7 +37,7 @@ for models, ports, and hosting are optional.
 | `DEEPSEEK_MODEL` | No | `deepseek.ts` | Default `deepseek-chat` |
 | `DEEPSEEK_BASE_URL` | No | `deepseek.ts` | Default `https://api.deepseek.com` |
 | `DEEPSEEK_MAX_TOKENS` | No | `deepseek.ts` | Default `8192` |
-| `PROCESS_TIME_BUDGET_MS` | No | `xactEngine.ts` (`processEstimate`) | Cap on the AI extraction phase. Default `50000` on Vercel — stays below the 60s function `maxDuration` so a slow model returns an actionable error instead of a 504 gateway timeout. Unset locally (no cap) unless you set one. |
+| `PROCESS_TIME_BUDGET_MS` | No | `xactEngine.ts` (`processEstimate`) | Cap on estimate processing, including PDF text extraction. Default `270000` on Vercel, below the endpoint's 300s function duration; explicit overrides are honored. Unset locally (no overall cap). |
 | `VITE_GAPPS_WEB_APP_URL` | No | `src/services/gappsAuth.ts` | Exact uppercase name; overrides the committed Apps Script `/exec` URL at build time. Set in each Vercel environment where an override is needed. |
 | `APP_URL` | No | AI Studio hosting | Injected automatically at runtime by AI Studio |
 | `PORT` | No | `server.ts` | Default `3000` |

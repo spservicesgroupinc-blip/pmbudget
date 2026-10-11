@@ -104,10 +104,14 @@ quantities" rule drives the material allowance roll-up.
   Token-limited responses retry rather than accepting partial selection lists. Oversized source
   documents and unreadable component reports return actionable errors instead of dropping content.
   A source product coverage check (flooring, cabinets, paint, trim, appliances, fixtures, ...)
-  triggers a **standalone selection rerun** over the original uploaded document(s) whenever a
-  visible product is missing from the extracted list — the same dedicated pass also recovers a
-  list the budget extraction omitted entirely, and it re-reads BOTH documents for choices found
-  in either one. A still-incomplete result is rejected before any partial sheet can be issued.
+  verifies the extracted list against the source. The dedicated **standalone selection pass**
+  runs in PARALLEL with the budget extraction (so the extra AI read adds no serial latency),
+  re-reads BOTH uploaded documents for choices found in either one, and is consumed whenever
+  the budget pass omits the list or drops a visible product; it is cancelled when nothing is
+  missing. On serverless hosts the AI phase is bounded by `PROCESS_TIME_BUDGET_MS` (default
+  50s on Vercel) so an oversized run fails with an actionable message instead of a 504 gateway
+  timeout; residual gaps trigger one targeted sequential rerun only while budget remains, and
+  a still-incomplete result is rejected before any partial sheet can be issued.
   Run `npm run verify:selections` for offline checks, or append `-- --live` to verify a real AI call.
 
 ## HTTP API

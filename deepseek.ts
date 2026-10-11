@@ -34,6 +34,23 @@ export interface DeepSeekJsonOptions {
   label?: string;
   /** Reject token-limited responses rather than treating repaired partial JSON as complete. */
   requireComplete?: boolean;
+  /**
+   * Wall-clock deadline (epoch ms) for the entire call (retries and repair
+   * passes included). Serverless hosts bound the request duration, so long
+   * pipelines must stop early and fail with an actionable error instead of
+   * letting the platform kill the response with a gateway timeout.
+   */
+  deadline?: number;
+  /** External cancellation, used to drop speculative parallel passes. */
+  signal?: AbortSignal;
+}
+
+/** Thrown when a call stopped early to respect `deadline`. */
+export class DeepSeekDeadlineError extends Error {
+  constructor(detail: string) {
+    super(`DeepSeek request stopped at the server time budget: ${detail}`);
+    this.name = 'DeepSeekDeadlineError';
+  }
 }
 
 interface ChatMessage {
@@ -69,7 +86,14 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 async function requestOnce(
   system: string,
   user: string,
-  opts: { temperature: number; maxTokens: number; timeoutMs: number; label: string; repairMessages?: ChatMessage[] }
+  opts: {
+    temperature: number;
+    maxTokens: number;
+    timeoutMs: number;
+    label: string;
+    repairMessages?: ChatMessage[];
+    signal?: AbortSignal;
+  }
 ): Promise<{ text: string; finishReason: string; usage?: DeepSeekUsage }> {
   const apiKey = process.env.DEEPSEEK_API_KEY;
   if (!apiKey) throw new ApiError('DEEPSEEK_API_KEY is not configured', 500, false);
@@ -78,6 +102,9 @@ async function requestOnce(
   const isReasoner = model.includes('reasoner');
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs);
+  const abortFromCaller = () => controller.abort();
+  opts.signal?.addEventListener('abort', abortFromCaller, { once: true });
+  if (opts.signal?.aborted) controller.abort();
 
   const messages: ChatMessage[] = opts.repairMessages ?? [
     { role: 'system', content: system },
@@ -122,6 +149,7 @@ async function requestOnce(
     return { text, finishReason, usage: payload?.usage };
   } finally {
     clearTimeout(timer);
+    opts.signal?.removeEventListener('abort', abortFromCaller);
   }
 }
 
@@ -218,9 +246,22 @@ export async function deepseekJsonWithMeta<T>(
   let lastError: unknown;
   let attempts = 0;
   let compact = false;
+  let deadlineStopped = false;
+  const minAttemptMs = 2_500;
+  const remainingBudget = () =>
+    options.deadline === undefined ? Infinity : options.deadline - Date.now();
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     attempts = attempt;
+    if (options.signal?.aborted) {
+      lastError = new Error('Request cancelled before completion.');
+      break;
+    }
+    if (remainingBudget() < minAttemptMs) {
+      deadlineStopped = true;
+      lastError = lastError || new Error('Not enough time remained to start another attempt.');
+      break;
+    }
     try {
       const user = compact
         ? `${options.user}\n\nIMPORTANT: The previous response hit the token limit. Re-output the COMPLETE JSON object and keep every string terse.`
@@ -228,8 +269,9 @@ export async function deepseekJsonWithMeta<T>(
       const result = await requestOnce(options.system, user, {
         temperature,
         maxTokens,
-        timeoutMs,
+        timeoutMs: Math.min(timeoutMs, remainingBudget()),
         label,
+        signal: options.signal,
       });
       if (result.finishReason === 'length' && options.requireComplete) {
         compact = true;
@@ -240,7 +282,7 @@ export async function deepseekJsonWithMeta<T>(
       let parsed = parseJsonLoose(result.text);
       let repaired = false;
 
-      if (!parsed.ok && attempt < maxAttempts) {
+      if (!parsed.ok && attempt < maxAttempts && remainingBudget() >= minAttemptMs) {
         // Model-driven repair pass on its own broken output.
         const repairMessages: ChatMessage[] = [
           { role: 'system', content: options.system },
@@ -254,9 +296,10 @@ export async function deepseekJsonWithMeta<T>(
         const fixed = await requestOnce(options.system, '', {
           temperature: 0,
           maxTokens,
-          timeoutMs,
+          timeoutMs: Math.min(timeoutMs, remainingBudget()),
           label: `${label}:repair`,
           repairMessages,
+          signal: options.signal,
         });
         const repairedParse = parseJsonLoose(fixed.text);
         if (repairedParse.ok) {
@@ -297,15 +340,24 @@ export async function deepseekJsonWithMeta<T>(
       lastError = new Error(`Invalid JSON: ${parsed.error}`);
     } catch (err) {
       lastError = err;
+      if (options.signal?.aborted) break; // speculative pass cancelled by the caller
       const isAbort = (err as { name?: string })?.name === 'AbortError';
       const retryable = isAbort || !(err instanceof ApiError) || err.retryable;
       if (!retryable) break;
       if (attempt < maxAttempts) {
-        await sleep(600 * Math.pow(3, attempt - 1) + Math.floor(Math.random() * 250));
+        const backoff = 600 * Math.pow(3, attempt - 1) + Math.floor(Math.random() * 250);
+        if (options.deadline !== undefined && Date.now() + backoff >= options.deadline - minAttemptMs) {
+          deadlineStopped = true;
+          break;
+        }
+        await sleep(backoff);
       }
     }
   }
 
   const message = lastError instanceof Error ? lastError.message : String(lastError);
+  if (deadlineStopped || (options.deadline !== undefined && Date.now() >= options.deadline - minAttemptMs)) {
+    throw new DeepSeekDeadlineError(`${label} did not finish in time (${message})`);
+  }
   throw new Error(`DeepSeek request failed (${label}) after ${attempts} attempt(s): ${message}`);
 }

@@ -162,8 +162,8 @@ export async function runProcessEstimate(payload: {
       status: 500,
       body: {
         error:
-          name === 'AbortError'
-            ? 'DeepSeek request timed out after 300 seconds.'
+          name === 'AbortError' || name === 'DeepSeekDeadlineError'
+            ? 'The AI request ran out of time before finishing. Reprocess the estimate; if it keeps timing out, raise PROCESS_TIME_BUDGET_MS or split the source documents.'
             : message || 'Failed to process Xactimate estimate.',
       },
     };

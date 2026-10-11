@@ -25,6 +25,10 @@ export interface CustomerSelectionRerunInput {
   coverageGaps: string[];
   /** The customer_selections schema slice (kept in sync with ESTIMATE_RESPONSE_SCHEMA). */
   selectionSchemaJson: string;
+  /** Wall-clock deadline (epoch ms), shared with the parallel budget pass. */
+  deadline?: number;
+  /** External cancellation so an unused speculative pass can be dropped. */
+  signal?: AbortSignal;
 }
 
 export interface CustomerSelectionRerunResult {
@@ -72,6 +76,8 @@ Before returning, re-scan the source documents and cover every highlighted cover
     label: 'customer-selection-rerun',
     attempts: 3,
     requireComplete: true,
+    deadline: input.deadline,
+    signal: input.signal,
   });
   const rows =
     response.data && typeof response.data === 'object' && Array.isArray(response.data.customer_selections)

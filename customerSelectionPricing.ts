@@ -22,7 +22,9 @@ function containsNumber(quote: string, amount: number): boolean {
 }
 
 export async function recoverCustomerSelectionPrices(
-  sourceText: string, selections: CustomerSelectionInput[]
+  sourceText: string,
+  selections: CustomerSelectionInput[],
+  opts: { deadline?: number } = {}
 ): Promise<{ selections: CustomerSelectionInput[]; tokens: number; recovered: number }> {
   const missing = selections.flatMap((item, index) => item.allowance_per_unit === null ?
     [{ selection_index: index, ...item }] : []);
@@ -62,6 +64,7 @@ If only a combined price exists, return null amounts and empty evidence for that
     label: 'customer-selection-pricing',
     attempts: 3,
     requireComplete: true,
+    deadline: opts.deadline,
   });
   const data = response.data as { prices?: unknown } | null;
   if (!Array.isArray(data?.prices)) throw new Error('Customer selection pricing review did not return valid prices. Reprocess the estimate.');

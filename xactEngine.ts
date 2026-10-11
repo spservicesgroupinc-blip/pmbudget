@@ -8,7 +8,7 @@
  * engine so every number and checksum is recomputed in code, never trusted
  * from the model.
  */
-import { deepseekJsonWithMeta, resolveModel } from './deepseek.js';
+import { DeepSeekDeadlineError, deepseekJsonWithMeta, resolveModel } from './deepseek.js';
 import { applyBudgetEngine, DIVISION_PROFILES, matchDivision } from './src/utils/budgetEngine.js';
 import { buildCustomerSelections, classifySelectionCategory } from './src/utils/customerSelections.js';
 import { findCustomerSelectionCoverageGaps } from './src/utils/customerSelectionCoverage.js';
@@ -538,7 +538,36 @@ export async function processEstimate(
     opts.userPrompt ||
     'Process this Xactimate estimate into subcontractor trade packages, the master budget inputs and Gantt dependency schedule.';
 
-  const { data, usage, model, repaired, truncated, attempts } = await deepseekJsonWithMeta<unknown>({
+  // Serverless hosts (Vercel) terminate the request at the configured
+  // maxDuration (60s in vercel.json) with a bare 504 gateway timeout. Bound
+  // the AI phase so the pipeline instead stops cleanly and returns an
+  // actionable error while keeping every result it already computed. Local
+  // dev has no such limit, so the budget only applies where it matters.
+  const configuredBudget = Number(process.env.PROCESS_TIME_BUDGET_MS);
+  const timeBudgetMs =
+    Number.isFinite(configuredBudget) && configuredBudget > 0
+      ? configuredBudget
+      : process.env.VERCEL
+        ? 50_000
+        : 0;
+  const deadline = timeBudgetMs > 0 ? startedAt + timeBudgetMs : undefined;
+
+  // Speculative standalone selection pass: it needs nothing from the budget
+  // pass, so it runs in PARALLEL and the dedicated AI read adds accuracy
+  // without adding serial wall-clock time to the serverless request. The
+  // result is consumed only when the budget pass omits the selection list or
+  // drops a source-visible product; otherwise the in-flight call is aborted.
+  const selectionRerunAbort = new AbortController();
+  const speculativeSelectionRerun = runCustomerSelectionRerun({
+    sourceText: estimateText,
+    existing: [],
+    coverageGaps: [],
+    selectionSchemaJson: SELECTION_SCHEMA_JSON,
+    deadline,
+    signal: selectionRerunAbort.signal,
+  }).catch(() => null);
+
+  const mainResponse = await deepseekJsonWithMeta<unknown>({
     system: `${ESTIMATE_SYSTEM_PROMPT}\n\n### RESPONSE JSON SCHEMA (STRICT)\n${JSON.stringify(
       ESTIMATE_RESPONSE_SCHEMA,
       null,
@@ -549,31 +578,46 @@ export async function processEstimate(
     label: 'estimate',
     attempts: 3,
     requireComplete: true,
+    deadline,
+  }).catch((err) => {
+    selectionRerunAbort.abort();
+    throw err;
   });
+  const { data, usage, model, repaired, truncated, attempts } = mainResponse;
 
   if (!data || typeof data !== 'object') {
+    selectionRerunAbort.abort();
     throw new Error('AI did not return the required estimate object. Reprocess the estimate.');
   }
   const rawData = data as Record<string, unknown>;
 
-  // Standalone selection rerun #1 - the budget pass omitted the list entirely.
-  // A dedicated pass over the original uploaded document(s) recovers it, so a
-  // transient omission cannot block the customer selection sheet.
+  // The standalone selection pass ran in PARALLEL with the budget pass (see
+  // above). Consume it when the budget pass omitted the list or dropped a
+  // source-visible product; otherwise abort the speculative work so a
+  // complete extraction is not followed by a second full AI read.
   let selectionRerunTokens = 0;
   let selectionRerunReason = '';
-  if (!Array.isArray(rawData.customer_selections)) {
-    const rerun = await runCustomerSelectionRerun({
-      sourceText: estimateText,
-      existing: [],
-      coverageGaps: [],
-      selectionSchemaJson: SELECTION_SCHEMA_JSON,
-    });
-    selectionRerunTokens += rerun.tokens;
-    if (!Array.isArray(rerun.rows)) {
-      throw new Error('AI did not return the required customer selection list. Reprocess the estimate to extract all finish choices.');
+  const mainHasSelections = Array.isArray(rawData.customer_selections) && rawData.customer_selections.length > 0;
+  const mainGaps = mainHasSelections
+    ? findCustomerSelectionCoverageGaps(estimateText, normalizeEstimate(rawData).estimate.customer_selection_source || [])
+    : [];
+  if (!mainHasSelections || mainGaps.length) {
+    const rerun = await speculativeSelectionRerun;
+    if (!rerun || !Array.isArray(rerun.rows) || rerun.rows.length === 0) {
+      selectionRerunAbort.abort();
+      throw new Error(
+        mainHasSelections
+          ? 'The customer selection rerun did not return a complete list. Reprocess the estimate.'
+          : 'AI did not return the required customer selection list. Reprocess the estimate to extract all finish choices.'
+      );
     }
-    selectionRerunReason = 'missing-list';
+    selectionRerunTokens += rerun.tokens;
+    selectionRerunReason = mainHasSelections ? 'coverage-gaps' : 'missing-list';
     rawData.customer_selections = rerun.rows;
+  } else {
+    // Bounded cost: cancel the unused speculative pass instead of paying for
+    // a redundant full-document read.
+    selectionRerunAbort.abort();
   }
 
   const { estimate, warnings } = normalizeEstimate(rawData);
@@ -583,6 +627,12 @@ export async function processEstimate(
 
   const coverageGaps = findCustomerSelectionCoverageGaps(estimateText, estimate.customer_selection_source || []);
   if (coverageGaps.length) {
+    // Residual gaps after the parallel pass: run ONE targeted sequential rerun
+    // that names the missing products — but only while the time budget allows,
+    // so a slow model can never push the serverless request into a 504.
+    if (deadline !== undefined && deadline - Date.now() < 20_000) {
+      throw new Error(`AI could not verify the customer selections for: ${coverageGaps.join(', ')}. Review the source scope and reprocess; a partial selection sheet was not issued.`);
+    }
     // A dedicated selection-only rerun re-reads EITHER uploaded document, so
     // a choice visible in the full estimate or the component report can never
     // be hidden by the trade-budget taxonomy (for example, appliances without
@@ -592,12 +642,15 @@ export async function processEstimate(
       existing: estimate.customer_selection_source || [],
       coverageGaps,
       selectionSchemaJson: SELECTION_SCHEMA_JSON,
+      deadline,
     });
     selectionRerunTokens += rerun.tokens;
     if (!Array.isArray(rerun.rows)) {
       throw new Error('The customer selection rerun did not return a complete list. Reprocess the estimate.');
     }
-    selectionRerunReason = selectionRerunReason ? `${selectionRerunReason}+coverage-gaps` : 'coverage-gaps';
+    if (!selectionRerunReason.includes('coverage-gaps')) {
+      selectionRerunReason = selectionRerunReason ? `${selectionRerunReason}+coverage-gaps` : 'coverage-gaps';
+    }
     const corrected = normalizeEstimate({ ...rawData, customer_selections: rerun.rows });
     const remaining = findCustomerSelectionCoverageGaps(estimateText, corrected.estimate.customer_selection_source || []);
     if (remaining.length) {
@@ -614,9 +667,23 @@ export async function processEstimate(
     return matched?.allowance_status === 'confirmed' ? { ...input, allowance_per_unit: matched.allowance_per_unit } : input;
   });
   const pricingReviewNeeded = estimate.customer_selection_source.some((item) => item.allowance_per_unit === null);
-  const pricing = await recoverCustomerSelectionPrices(estimateText, estimate.customer_selection_source);
-  estimate.customer_selection_source = pricing.selections;
-  selectionRerunTokens += pricing.tokens;
+  if (pricingReviewNeeded) {
+    // Pricing recovery is a second serial AI pass; only start it while enough
+    // of the request budget remains, and degrade to the unpriced-selection
+    // warning instead of failing the whole request at the budget edge.
+    if (deadline !== undefined && deadline - Date.now() < 8_000) {
+      warnings.push('Material price recovery was skipped to respect the server time budget; confirm the remaining allowances manually before issuing the sheet.');
+    } else {
+      try {
+        const pricing = await recoverCustomerSelectionPrices(estimateText, estimate.customer_selection_source, { deadline });
+        estimate.customer_selection_source = pricing.selections;
+        selectionRerunTokens += pricing.tokens;
+      } catch (err) {
+        if (!(err instanceof DeepSeekDeadlineError)) throw err;
+        warnings.push('Material price recovery was stopped by the server time budget; confirm the remaining allowances manually before issuing the sheet.');
+      }
+    }
+  }
   const mined = mineEstimateDollars(estimateText);
   warnings.push(...applyMinedBackfill(estimate, mined).warnings);
   const withBudget = applyBudgetEngine(estimate);

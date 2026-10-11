@@ -207,44 +207,76 @@ async function main() {
   }).estimate.material_allowances?.length === 0);
 
   // Exercise the real server pipeline with the external model response stubbed.
+  // The pipeline runs the budget pass and the standalone selection pass in
+  // PARALLEL, so stubs dispatch on the prompt kind instead of call order.
   const originalFetch = globalThis.fetch;
   const originalKey = process.env.DEEPSEEK_API_KEY;
   let prompt = '';
   process.env.DEEPSEEK_API_KEY = 'offline-verification';
-  globalThis.fetch = async (_url, init) => {
-    prompt = String(init?.body || '');
-    return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(rawEstimate) }, finish_reason: 'stop' }] }), { status: 200 });
+
+  type PromptKind = 'main' | 'rerun' | 'pricing' | 'repair';
+  interface StubReply { content: unknown; finishReason?: string; }
+  const promptKind = (init?: { body?: unknown }): PromptKind => {
+    let messages: Array<{ role?: string; content?: string }> = [];
+    try {
+      messages = (JSON.parse(String(init?.body || '{}')).messages || []) as typeof messages;
+    } catch {
+      // Non-JSON body: treat as the budget pass.
+    }
+    const system = messages.find((message) => message.role === 'system')?.content || '';
+    const lastUser = [...messages].reverse().find((message) => message.role === 'user')?.content || '';
+    if (lastUser.includes('corrected, complete JSON')) return 'repair';
+    if (system.includes('### RESPONSE JSON SCHEMA (STRICT)')) return 'main';
+    if (system.includes('CUSTOMER FINISH SELECTIONS')) return 'rerun';
+    if (system.includes('Recover MATERIAL-ONLY')) return 'pricing';
+    return 'main';
   };
+  const installStub = (
+    handlers: Partial<Record<PromptKind, (call: number) => StubReply>>
+  ): Record<PromptKind, number> => {
+    const counters: Record<PromptKind, number> = { main: 0, rerun: 0, pricing: 0, repair: 0 };
+    globalThis.fetch = async (_url, init) => {
+      const kind = promptKind(init);
+      counters[kind]++;
+      if (kind === 'main') prompt = String(init?.body || '');
+      const reply = handlers[kind]?.(counters[kind]) ?? { content: rawEstimate };
+      return new Response(
+        JSON.stringify({ choices: [{ message: { content: JSON.stringify(reply.content) }, finish_reason: reply.finishReason ?? 'stop' }] }),
+        { status: 200 }
+      );
+    };
+    return counters;
+  };
+  const baselineCounters = installStub({});
   let pipeline: EstimateResult;
   let unresolved: EstimateResult;
   try {
     pipeline = await processEstimate('FCV Flooring 1000.00\nPLM Faucet 1000.00\nTotal RCV 2000.00');
+    check('parallel: standalone selection pass runs alongside the budget pass', baselineCounters.main === 1 && baselineCounters.rerun === 1);
     const oversized = await runProcessEstimate({ textContent: 'x'.repeat(250001) });
     check('source: oversized documents rejected rather than silently clipped', oversized.status === 413);
-    let calls = 0;
-    globalThis.fetch = async () => {
-      calls++;
-      return new Response(JSON.stringify({ choices: [{
-        message: { content: JSON.stringify(calls === 1 ? { ...rawEstimate, customer_selections: [source[0]] } : rawEstimate) },
-        finish_reason: calls === 1 ? 'length' : 'stop',
-      }] }), { status: 200 });
-    };
+    const retryCounters = installStub({
+      main: (call) =>
+        call === 1
+          ? { content: { ...rawEstimate, customer_selections: [source[0]] }, finishReason: 'length' }
+          : { content: rawEstimate },
+    });
     const retried = await processEstimate('FCV Flooring 1000.00\nPLM Faucet 1000.00\nTotal RCV 2000.00');
-    check('AI: truncated valid JSON retried to recover remaining selections', calls === 2 && retried.customer_selections?.length === 3);
-    globalThis.fetch = async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ ...rawEstimate, customer_selections: undefined }) }, finish_reason: 'stop' }] }), { status: 200 });
+    check('AI: truncated valid JSON retried to recover remaining selections', retryCounters.main === 2 && retried.customer_selections?.length === 3);
+    installStub({
+      main: () => ({ content: { ...rawEstimate, customer_selections: undefined } }),
+      rerun: () => ({ content: { ...rawEstimate, customer_selections: undefined } }),
+    });
     let missingListRejected = false;
     try { await processEstimate('FCV Flooring 1000.00'); } catch { missingListRejected = true; }
     check('AI: omitted selection list cannot be reported as complete', missingListRejected);
-    let rerunCalls = 0;
-    globalThis.fetch = async () => {
-      rerunCalls++;
-      const content = rerunCalls === 1 ? { ...rawEstimate, customer_selections: undefined } : rawEstimate;
-      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) }, finish_reason: 'stop' }] }), { status: 200 });
-    };
+    const rerunCounters = installStub({
+      main: () => ({ content: { ...rawEstimate, customer_selections: undefined } }),
+    });
     const reran = await processEstimate('FCV Flooring 1000.00');
     check(
       'rerun: standalone selection rerun recovers a list the budget pass omitted',
-      rerunCalls === 2 && reran.customer_selection_source?.length === 4 &&
+      rerunCounters.main === 1 && rerunCounters.rerun === 1 && reran.customer_selection_source?.length === 4 &&
         Boolean(reran.processing?.warnings?.some((warning) => warning.includes('standalone rerun')))
     );
     check('coverage: detects an omitted appliance from the source', findCustomerSelectionCoverageGaps('APP Dishwasher 1 EA, material-only $400.00/EA.', source).includes('dishwasher'));
@@ -254,50 +286,49 @@ async function main() {
     check('coverage: a choice extracted from either document resolves the gap', findCustomerSelectionCoverageGaps('FCV Luxury vinyl plank flooring 40 SF', [source[0]]).length === 0);
     check('coverage: rough-in and supply lines do not demand a selection', findCustomerSelectionCoverageGaps('PLM Faucet supply line 1 EA\nELE Wire 200 LF', []).length === 0);
     check('documents: both uploads are labeled with marker headers', estimateDocumentHeader('a.pdf') === '===== XACTIMATE ESTIMATE (a.pdf) =====' && componentDocumentHeader('b.pdf') === '===== COMPONENT BREAKDOWN REPORT (b.pdf) =====');
-    let coverageCalls = 0;
-    globalThis.fetch = async () => {
-      coverageCalls++;
-      const content = coverageCalls === 1 ? rawEstimate : { customer_selections: [
+    const coverageCounters = installStub({
+      rerun: () => ({ content: { customer_selections: [
         ...source, { trade: 'Appliances', description: 'Dishwasher', qty: 1, uom: 'EA', allowance_per_unit: 400 },
-      ] };
-      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) }, finish_reason: 'stop' }] }), { status: 200 });
-    };
+      ] } }),
+    });
     const recovered = await processEstimate('APP Dishwasher 1 EA, material-only $400.00/EA.');
-    check('coverage: focused review recovers omitted products without duplicates', coverageCalls === 2 && recovered.customer_selections?.length === 4 && recovered.customer_selections.some((item) => item.description === 'Dishwasher'));
-    let pricingCalls = 0;
+    check('coverage: focused review recovers omitted products without duplicates', coverageCounters.main === 1 && coverageCounters.rerun === 1 && recovered.customer_selections?.length === 4 && recovered.customer_selections.some((item) => item.description === 'Dishwasher'));
     const priceSource = 'Component report\nDescription | Qty | Unit | Material Total | Labor\nBathroom faucet | 2 | EA | 330.00 | 80.00\nBedroom carpet | 20 | SY | 405.00 | 100.00\nPendant lighting | 1 | EA | 92.00 | 25.00';
     const priceSelections = [
       { ...source[2], qty: 2 },
       { ...source[3], qty: 180, allowance_per_unit: null },
       { trade: 'Electrical', description: 'Pendant lighting', qty: 1, uom: 'EA', allowance_per_unit: null },
     ];
-    globalThis.fetch = async () => {
-      pricingCalls++;
-      const content = pricingCalls === 1 ? { ...rawEstimate, material_allowances: [], customer_selections: priceSelections } : { prices: [
+    const pricingCounters = installStub({
+      main: () => ({ content: { ...rawEstimate, material_allowances: [], customer_selections: priceSelections } }),
+      pricing: () => ({ content: { prices: [
         { selection_index: 0, material_total: 330, material_quantity: 2, material_uom: 'EA', evidence: priceSource },
         { selection_index: 1, material_total: 405, material_quantity: 20, material_uom: 'SY', evidence: priceSource },
         { selection_index: 2, material_unit_cost: 92, material_uom: 'EA', evidence: priceSource },
-      ] };
-      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) }, finish_reason: 'stop' }] }), { status: 200 });
-    };
+      ] } }),
+    });
     const priced = await processEstimate(priceSource);
-    check('pricing pipeline: second pass recovers all three missing material amounts', pricingCalls === 2 && Boolean(priced.customer_selections?.every((item) => item.allowance_status === 'confirmed')));
+    check('pricing pipeline: second pass recovers all three missing material amounts', pricingCounters.pricing === 1 && Boolean(priced.customer_selections?.every((item) => item.allowance_status === 'confirmed')));
     check('pricing pipeline: material total excludes separately listed labor', priced.customer_selections?.[0].allowance_per_unit === 165);
     check('pricing pipeline: square-yard price converted to square feet', priced.customer_selections?.[1].allowance_per_unit === 2.25 && priced.customer_selections[1].allowance_total === 405);
     check('pricing pipeline: recovered allowances persist when rebuilding', JSON.stringify(buildCustomerSelections(priced.material_allowances, priced.customer_selection_source)) === JSON.stringify(priced.customer_selections));
     check('pricing pipeline: customer PDF can be generated after automatic recovery', (await buildCustomerSelectionsPdf(priced)).length > 5000);
-    let unresolvedCalls = 0;
-    globalThis.fetch = async () => {
-      unresolvedCalls++;
-      const content = unresolvedCalls === 1 ? { ...rawEstimate, material_allowances: [], customer_selections: [source[2]] } : { prices: [
+    const unresolvedCounters = installStub({
+      main: () => ({ content: { ...rawEstimate, material_allowances: [], customer_selections: [source[2]] } }),
+      pricing: () => ({ content: { prices: [
         { selection_index: 0, material_unit_cost: 165, material_uom: 'EA', evidence: 'Invented material price 165.00' },
         { selection_index: 0, material_unit_cost: 1000, material_uom: 'EA', evidence: 'PLM Faucet material 999.00' },
         { selection_index: 9, material_unit_cost: 999, material_uom: 'EA', evidence: 'PLM Faucet material 999.00' },
-      ] };
-      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) }, finish_reason: 'stop' }] }), { status: 200 });
-    };
+      ] } }),
+    });
     unresolved = await processEstimate('PLM Faucet material 999.00');
-    check('pricing pipeline: fabricated excerpts, unsupported amounts and invalid indices rejected', unresolvedCalls === 2 && unresolved.customer_selections?.[0].allowance_status === 'needs_review');
+    check('pricing pipeline: fabricated excerpts, unsupported amounts and invalid indices rejected', unresolvedCounters.pricing === 1 && unresolved.customer_selections?.[0].allowance_status === 'needs_review');
+    installStub({});
+    process.env.PROCESS_TIME_BUDGET_MS = '1';
+    let budgetRejected = false;
+    try { await processEstimate('FCV Flooring 1000.00'); } catch (err) { budgetRejected = err instanceof Error && /time budget/i.test(err.message); }
+    delete process.env.PROCESS_TIME_BUDGET_MS;
+    check('budget: exhausted server time budget fails fast with an actionable error', budgetRejected);
     globalThis.fetch = async () => new Response(JSON.stringify({ error: { message: 'Authentication Fails: invalid API key.' } }), { status: 401 });
     const originalError = console.error;
     console.error = () => {};
